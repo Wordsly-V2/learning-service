@@ -26,6 +26,7 @@ async function bootstrap() {
             'word-progress',
             'Word progress and spaced repetition endpoints',
         )
+        .addTag('daily-habit', 'Daily practice goal and streak endpoints')
         .build();
 
     const document = SwaggerModule.createDocument(app, config);

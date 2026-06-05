@@ -31,3 +31,18 @@ model WordProgress {
   @@index([wordId])
   @@map("word_progress")
 }
+
+// Daily practice goal and streak (one row per user).
+model DailyHabit {
+  userLoginId String @id @map("user_login_id") @db.Uuid
+
+  wordsToday       Int       @default(0) @map("words_today")
+  streak           Int       @default(0)
+  practiceDate     DateTime  @map("practice_date") @db.Date
+  lastPracticeDate DateTime? @map("last_practice_date") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("daily_habit")
+}
