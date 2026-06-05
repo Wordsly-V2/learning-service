@@ -1,7 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 export const DAILY_GOAL_WORDS = 10;
+export const DAILY_GOAL_MIN = 5;
+export const DAILY_GOAL_MAX = 50;
+export const ACTIVITY_HISTORY_DAYS = 7;
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -35,6 +45,30 @@ export class RecordDailyPracticeDto {
   clientDate: string;
 }
 
+export class UpdateDailyGoalDto {
+  @ApiProperty({
+    description: 'Daily word goal',
+    example: 15,
+    minimum: DAILY_GOAL_MIN,
+    maximum: DAILY_GOAL_MAX,
+  })
+  @IsInt()
+  @Min(DAILY_GOAL_MIN)
+  @Max(DAILY_GOAL_MAX)
+  dailyGoal: number;
+}
+
+export class DailyHabitDayDto {
+  @ApiProperty({ example: '2026-06-05' })
+  date: string;
+
+  @ApiProperty({ example: 12 })
+  words: number;
+
+  @ApiProperty({ example: true })
+  goalMet: boolean;
+}
+
 export class DailyHabitResponseDto {
   @ApiProperty({ example: '2026-06-05' })
   date: string;
@@ -45,9 +79,39 @@ export class DailyHabitResponseDto {
   @ApiProperty({ example: 3 })
   streak: number;
 
+  @ApiProperty({ example: 12 })
+  longestStreak: number;
+
+  @ApiProperty({ example: 2 })
+  goalStreak: number;
+
+  @ApiProperty({ example: 5 })
+  longestGoalStreak: number;
+
   @ApiPropertyOptional({ example: '2026-06-05', nullable: true })
   lastPracticeDate: string | null;
 
-  @ApiProperty({ example: DAILY_GOAL_WORDS })
+  @ApiProperty({ example: 10 })
   goal: number;
+
+  @ApiProperty({ example: false })
+  goalMetToday: boolean;
+
+  @ApiProperty({ example: 240 })
+  totalWordsPracticed: number;
+
+  @ApiProperty({ example: 18 })
+  totalPracticeDays: number;
+
+  @ApiProperty({ example: 42 })
+  wordsThisWeek: number;
+
+  @ApiProperty({ example: 5 })
+  daysActiveThisWeek: number;
+
+  @ApiProperty({ type: [DailyHabitDayDto] })
+  recentDays: DailyHabitDayDto[];
+
+  @ApiProperty({ example: 'Almost there — 2 more words to hit your goal.' })
+  message: string;
 }

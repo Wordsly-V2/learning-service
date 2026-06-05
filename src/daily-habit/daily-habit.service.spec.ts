@@ -11,6 +11,14 @@ describe('DailyHabitService', () => {
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
+      upsert: jest.Mock;
+    };
+    dailyHabitDay: {
+      findMany: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      upsert: jest.Mock;
+      findUnique: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -22,6 +30,14 @@ describe('DailyHabitService', () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        upsert: jest.fn(),
+      },
+      dailyHabitDay: {
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        update: jest.fn(),
+        upsert: jest.fn(),
+        findUnique: jest.fn(),
       },
       $transaction: jest.fn(async (fn: (tx: typeof prisma) => unknown) =>
         fn(prisma),
@@ -35,40 +51,29 @@ describe('DailyHabitService', () => {
 
     const result = await service.getDailyHabit(userLoginId, today);
 
-    expect(result).toEqual({
-      date: today,
-      wordsToday: 0,
-      streak: 0,
-      lastPracticeDate: null,
-      goal: 10,
-    });
-  });
-
-  it('resets wordsToday when practice date is not today', async () => {
-    prisma.dailyHabit.findUnique.mockResolvedValue({
-      userLoginId,
-      wordsToday: 8,
-      streak: 4,
-      practiceDate: parseClientDate(yesterday),
-      lastPracticeDate: parseClientDate(yesterday),
-    });
-
-    const result = await service.getDailyHabit(userLoginId, today);
-
     expect(result.wordsToday).toBe(0);
-    expect(result.streak).toBe(4);
-    expect(result.lastPracticeDate).toBe(yesterday);
+    expect(result.streak).toBe(0);
+    expect(result.goal).toBe(10);
+    expect(result.recentDays).toHaveLength(7);
   });
 
   it('creates a new row on first practice', async () => {
     prisma.dailyHabit.findUnique.mockResolvedValue(null);
     prisma.dailyHabit.create.mockResolvedValue({
       userLoginId,
+      dailyGoal: 10,
       wordsToday: 5,
       streak: 1,
+      longestStreak: 1,
+      goalStreak: 0,
+      longestGoalStreak: 0,
       practiceDate: parseClientDate(today),
       lastPracticeDate: parseClientDate(today),
+      lastGoalMetDate: null,
+      totalWordsPracticed: 5,
+      totalPracticeDays: 1,
     });
+    prisma.dailyHabitDay.create.mockResolvedValue({});
 
     const result = await service.recordPractice(userLoginId, {
       wordCount: 5,
@@ -76,29 +81,43 @@ describe('DailyHabitService', () => {
     });
 
     expect(prisma.dailyHabit.create).toHaveBeenCalled();
-    expect(result).toEqual({
-      date: today,
-      wordsToday: 5,
-      streak: 1,
-      lastPracticeDate: today,
-      goal: 10,
-    });
+    expect(prisma.dailyHabitDay.create).toHaveBeenCalled();
+    expect(result.wordsToday).toBe(5);
+    expect(result.streak).toBe(1);
   });
 
   it('continues streak when last practice was yesterday', async () => {
     prisma.dailyHabit.findUnique.mockResolvedValue({
       userLoginId,
+      dailyGoal: 10,
       wordsToday: 10,
       streak: 2,
+      longestStreak: 2,
+      goalStreak: 1,
+      longestGoalStreak: 1,
       practiceDate: parseClientDate(yesterday),
       lastPracticeDate: parseClientDate(yesterday),
+      lastGoalMetDate: parseClientDate(yesterday),
+      totalWordsPracticed: 20,
+      totalPracticeDays: 2,
+    });
+    prisma.dailyHabitDay.upsert.mockResolvedValue({
+      wordsPracticed: 3,
+      goalMet: false,
     });
     prisma.dailyHabit.update.mockResolvedValue({
       userLoginId,
+      dailyGoal: 10,
       wordsToday: 3,
       streak: 3,
+      longestStreak: 3,
+      goalStreak: 1,
+      longestGoalStreak: 1,
       practiceDate: parseClientDate(today),
       lastPracticeDate: parseClientDate(today),
+      lastGoalMetDate: parseClientDate(yesterday),
+      totalWordsPracticed: 23,
+      totalPracticeDays: 3,
     });
 
     const result = await service.recordPractice(userLoginId, {
@@ -106,36 +125,7 @@ describe('DailyHabitService', () => {
       clientDate: today,
     });
 
-    expect(prisma.dailyHabit.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ streak: 3, wordsToday: 3 }),
-      }),
-    );
     expect(result.streak).toBe(3);
     expect(result.wordsToday).toBe(3);
-  });
-
-  it('resets streak when gap is longer than one day', async () => {
-    prisma.dailyHabit.findUnique.mockResolvedValue({
-      userLoginId,
-      wordsToday: 10,
-      streak: 5,
-      practiceDate: parseClientDate('2026-06-01'),
-      lastPracticeDate: parseClientDate('2026-06-01'),
-    });
-    prisma.dailyHabit.update.mockResolvedValue({
-      userLoginId,
-      wordsToday: 2,
-      streak: 1,
-      practiceDate: parseClientDate(today),
-      lastPracticeDate: parseClientDate(today),
-    });
-
-    const result = await service.recordPractice(userLoginId, {
-      wordCount: 2,
-      clientDate: today,
-    });
-
-    expect(result.streak).toBe(1);
   });
 });

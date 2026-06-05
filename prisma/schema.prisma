@@ -36,13 +36,37 @@ model WordProgress {
 model DailyHabit {
   userLoginId String @id @map("user_login_id") @db.Uuid
 
-  wordsToday       Int       @default(0) @map("words_today")
-  streak           Int       @default(0)
-  practiceDate     DateTime  @map("practice_date") @db.Date
-  lastPracticeDate DateTime? @map("last_practice_date") @db.Date
+  dailyGoal         Int @default(10) @map("daily_goal")
+  wordsToday        Int @default(0) @map("words_today")
+  streak            Int @default(0)
+  longestStreak     Int @default(0) @map("longest_streak")
+  goalStreak        Int @default(0) @map("goal_streak")
+  longestGoalStreak Int @default(0) @map("longest_goal_streak")
+  practiceDate      DateTime  @map("practice_date") @db.Date
+  lastPracticeDate  DateTime? @map("last_practice_date") @db.Date
+  lastGoalMetDate   DateTime? @map("last_goal_met_date") @db.Date
+
+  totalWordsPracticed Int @default(0) @map("total_words_practiced")
+  totalPracticeDays   Int @default(0) @map("total_practice_days")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
+  days DailyHabitDay[]
+
   @@map("daily_habit")
+}
+
+// Per-day activity log for history and weekly stats.
+model DailyHabitDay {
+  userLoginId    String   @map("user_login_id") @db.Uuid
+  practiceDate   DateTime @map("practice_date") @db.Date
+  wordsPracticed Int      @default(0) @map("words_practiced")
+  goalMet        Boolean  @default(false) @map("goal_met")
+
+  habit DailyHabit @relation(fields: [userLoginId], references: [userLoginId], onDelete: Cascade)
+
+  @@id([userLoginId, practiceDate])
+  @@index([userLoginId, practiceDate(sort: Desc)])
+  @@map("daily_habit_day")
 }

@@ -1,10 +1,13 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
-import { DailyHabit } from '@prisma/client';
+import { DailyHabit, DailyHabitDay } from '@prisma/client';
 import {
+  ACTIVITY_HISTORY_DAYS,
   DAILY_GOAL_WORDS,
+  DailyHabitDayDto,
   DailyHabitResponseDto,
   RecordDailyPracticeDto,
+  UpdateDailyGoalDto,
 } from './dto/daily-habit.dto';
 import {
   datesEqual,
@@ -12,6 +15,16 @@ import {
   parseClientDate,
   yesterdayClientDate,
 } from './daily-habit-date.util';
+import {
+  effectiveGoalStreak,
+  habitMotivation,
+  isGoalMet,
+  lastNDays,
+  nextGoalStreak,
+  nextPracticeStreak,
+} from './daily-habit.logic';
+
+type DailyHabitRow = DailyHabit & { days?: DailyHabitDay[] };
 
 @Injectable()
 export class DailyHabitService {
@@ -24,7 +37,8 @@ export class DailyHabitService {
     const row = await this.prisma.dailyHabit.findUnique({
       where: { userLoginId },
     });
-    return this.toResponse(row, clientDate);
+    const recentDays = await this.loadRecentDays(userLoginId, clientDate);
+    return this.toResponse(row, clientDate, recentDays);
   }
 
   async recordPractice(
@@ -39,75 +53,297 @@ export class DailyHabitService {
       const existing = await tx.dailyHabit.findUnique({
         where: { userLoginId },
       });
+      const dailyGoal = existing?.dailyGoal ?? DAILY_GOAL_WORDS;
 
       if (!existing) {
-        return tx.dailyHabit.create({
+        const goalMetToday = isGoalMet(wordCount, dailyGoal);
+        const row = await tx.dailyHabit.create({
           data: {
             userLoginId,
+            dailyGoal,
             wordsToday: wordCount,
             streak: 1,
+            longestStreak: 1,
+            goalStreak: goalMetToday ? 1 : 0,
+            longestGoalStreak: goalMetToday ? 1 : 0,
             practiceDate: today,
             lastPracticeDate: today,
+            lastGoalMetDate: goalMetToday ? today : null,
+            totalWordsPracticed: wordCount,
+            totalPracticeDays: 1,
           },
         });
+        await tx.dailyHabitDay.create({
+          data: {
+            userLoginId,
+            practiceDate: today,
+            wordsPracticed: wordCount,
+            goalMet: goalMetToday,
+          },
+        });
+        return row;
       }
 
       const sameDay = datesEqual(existing.practiceDate, today);
-      const wordsToday = sameDay ? existing.wordsToday + wordCount : wordCount;
+      const wordsToday = sameDay
+        ? existing.wordsToday + wordCount
+        : wordCount;
+      const isNewCalendarDay = !sameDay;
 
-      let streak = existing.streak;
-      const last = existing.lastPracticeDate;
+      const streak = nextPracticeStreak(
+        existing.streak,
+        existing.lastPracticeDate,
+        today,
+        yesterday,
+      );
+      const longestStreak = Math.max(existing.longestStreak, streak);
 
-      if (!last) {
-        streak = 1;
-      } else if (datesEqual(last, today)) {
-        streak = Math.max(streak, 1);
-      } else if (datesEqual(last, yesterday)) {
-        streak += 1;
-      } else {
-        streak = 1;
+      const dayRecord = await tx.dailyHabitDay.upsert({
+        where: {
+          userLoginId_practiceDate: {
+            userLoginId,
+            practiceDate: today,
+          },
+        },
+        create: {
+          userLoginId,
+          practiceDate: today,
+          wordsPracticed: wordCount,
+          goalMet: isGoalMet(wordCount, dailyGoal),
+        },
+        update: {
+          wordsPracticed: { increment: wordCount },
+        },
+      });
+
+      const goalMetToday = isGoalMet(wordsToday, dailyGoal);
+      if (dayRecord.goalMet !== goalMetToday) {
+        await tx.dailyHabitDay.update({
+          where: {
+            userLoginId_practiceDate: {
+              userLoginId,
+              practiceDate: today,
+            },
+          },
+          data: { goalMet: goalMetToday },
+        });
       }
+
+      const goalUpdate = nextGoalStreak(
+        existing.goalStreak,
+        existing.lastGoalMetDate,
+        today,
+        yesterday,
+        goalMetToday,
+      );
+      const longestGoalStreak = Math.max(
+        existing.longestGoalStreak,
+        goalUpdate.goalStreak,
+      );
 
       return tx.dailyHabit.update({
         where: { userLoginId },
         data: {
           wordsToday,
           streak,
+          longestStreak,
+          goalStreak: goalUpdate.goalStreak,
+          longestGoalStreak,
           practiceDate: today,
           lastPracticeDate: today,
+          lastGoalMetDate: goalUpdate.lastGoalMetDate,
+          totalWordsPracticed: { increment: wordCount },
+          ...(isNewCalendarDay && {
+            totalPracticeDays: { increment: 1 },
+          }),
         },
       });
     });
 
-    return this.toResponse(updated, clientDate);
+    const recentDays = await this.loadRecentDays(userLoginId, clientDate);
+    return this.toResponse(updated, clientDate, recentDays);
+  }
+
+  async updateDailyGoal(
+    userLoginId: string,
+    body: UpdateDailyGoalDto,
+    clientDate: string,
+  ): Promise<DailyHabitResponseDto> {
+    const today = parseClientDate(clientDate);
+    const row = await this.prisma.dailyHabit.upsert({
+      where: { userLoginId },
+      create: {
+        userLoginId,
+        dailyGoal: body.dailyGoal,
+        practiceDate: today,
+      },
+      update: {
+        dailyGoal: body.dailyGoal,
+      },
+    });
+
+    const todayDay = await this.prisma.dailyHabitDay.findUnique({
+      where: {
+        userLoginId_practiceDate: {
+          userLoginId,
+          practiceDate: today,
+        },
+      },
+    });
+
+    if (todayDay) {
+      const goalMet = isGoalMet(todayDay.wordsPracticed, body.dailyGoal);
+      if (todayDay.goalMet !== goalMet) {
+        await this.prisma.dailyHabitDay.update({
+          where: {
+            userLoginId_practiceDate: {
+              userLoginId,
+              practiceDate: today,
+            },
+          },
+          data: { goalMet },
+        });
+      }
+
+      const yesterday = parseClientDate(yesterdayClientDate(clientDate));
+      const goalUpdate = nextGoalStreak(
+        row.goalStreak,
+        row.lastGoalMetDate,
+        today,
+        yesterday,
+        goalMet,
+      );
+      const longestGoalStreak = Math.max(
+        row.longestGoalStreak,
+        goalUpdate.goalStreak,
+      );
+
+      const updated = await this.prisma.dailyHabit.update({
+        where: { userLoginId },
+        data: {
+          dailyGoal: body.dailyGoal,
+          goalStreak: goalUpdate.goalStreak,
+          longestGoalStreak,
+          lastGoalMetDate: goalUpdate.lastGoalMetDate,
+        },
+      });
+      const recentDays = await this.loadRecentDays(userLoginId, clientDate);
+      return this.toResponse(updated, clientDate, recentDays);
+    }
+
+    const recentDays = await this.loadRecentDays(userLoginId, clientDate);
+    return this.toResponse(row, clientDate, recentDays);
+  }
+
+  private async loadRecentDays(
+    userLoginId: string,
+    clientDate: string,
+  ): Promise<DailyHabitDayDto[]> {
+    const dates = lastNDays(clientDate, ACTIVITY_HISTORY_DAYS);
+    const start = parseClientDate(dates[0]);
+    const end = parseClientDate(dates[dates.length - 1]);
+
+    const rows = await this.prisma.dailyHabitDay.findMany({
+      where: {
+        userLoginId,
+        practiceDate: { gte: start, lte: end },
+      },
+    });
+
+    const byDate = new Map(
+      rows.map((row) => [formatClientDate(row.practiceDate), row]),
+    );
+
+    return dates.map((date) => {
+      const row = byDate.get(date);
+      return {
+        date,
+        words: row?.wordsPracticed ?? 0,
+        goalMet: row?.goalMet ?? false,
+      };
+    });
   }
 
   private toResponse(
-    row: DailyHabit | null,
+    row: DailyHabitRow | null,
     clientDate: string,
+    recentDays: DailyHabitDayDto[],
   ): DailyHabitResponseDto {
     const today = parseClientDate(clientDate);
+    const goal = row?.dailyGoal ?? DAILY_GOAL_WORDS;
 
     if (!row) {
-      return {
-        date: clientDate,
-        wordsToday: 0,
-        streak: 0,
-        lastPracticeDate: null,
-        goal: DAILY_GOAL_WORDS,
-      };
+      return this.emptyResponse(clientDate, goal, recentDays);
     }
 
     const sameDay = datesEqual(row.practiceDate, today);
+    const wordsToday = sameDay ? row.wordsToday : 0;
+    const goalMetToday = isGoalMet(wordsToday, goal);
+    const displayGoalStreak = effectiveGoalStreak(
+      row.goalStreak,
+      row.lastGoalMetDate,
+      clientDate,
+    );
+    const wordsThisWeek = recentDays.reduce((sum, day) => sum + day.words, 0);
+    const daysActiveThisWeek = recentDays.filter((day) => day.words > 0).length;
+    const wordsRemaining = Math.max(0, goal - wordsToday);
 
     return {
       date: clientDate,
-      wordsToday: sameDay ? row.wordsToday : 0,
+      wordsToday,
       streak: row.streak,
+      longestStreak: row.longestStreak,
+      goalStreak: displayGoalStreak,
+      longestGoalStreak: row.longestGoalStreak,
       lastPracticeDate: row.lastPracticeDate
         ? formatClientDate(row.lastPracticeDate)
         : null,
-      goal: DAILY_GOAL_WORDS,
+      goal,
+      goalMetToday,
+      totalWordsPracticed: row.totalWordsPracticed,
+      totalPracticeDays: row.totalPracticeDays,
+      wordsThisWeek,
+      daysActiveThisWeek,
+      recentDays,
+      message: habitMotivation({
+        goalMetToday,
+        wordsToday,
+        goal,
+        streak: row.streak,
+        goalStreak: displayGoalStreak,
+        wordsRemaining,
+      }),
+    };
+  }
+
+  private emptyResponse(
+    clientDate: string,
+    goal: number,
+    recentDays: DailyHabitDayDto[],
+  ): DailyHabitResponseDto {
+    return {
+      date: clientDate,
+      wordsToday: 0,
+      streak: 0,
+      longestStreak: 0,
+      goalStreak: 0,
+      longestGoalStreak: 0,
+      lastPracticeDate: null,
+      goal,
+      goalMetToday: false,
+      totalWordsPracticed: 0,
+      totalPracticeDays: 0,
+      wordsThisWeek: recentDays.reduce((sum, day) => sum + day.words, 0),
+      daysActiveThisWeek: recentDays.filter((day) => day.words > 0).length,
+      recentDays,
+      message: habitMotivation({
+        goalMetToday: false,
+        wordsToday: 0,
+        goal,
+        streak: 0,
+        goalStreak: 0,
+        wordsRemaining: goal,
+      }),
     };
   }
 }

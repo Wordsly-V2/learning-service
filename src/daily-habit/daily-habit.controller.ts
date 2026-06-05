@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -20,6 +21,7 @@ import {
   DailyHabitQueryDto,
   DailyHabitResponseDto,
   RecordDailyPracticeDto,
+  UpdateDailyGoalDto,
 } from './dto/daily-habit.dto';
 import { DailyHabitService } from './daily-habit.service';
 
@@ -70,5 +72,28 @@ export class DailyHabitController {
     @Body() body: RecordDailyPracticeDto,
   ): Promise<DailyHabitResponseDto> {
     return this.dailyHabitService.recordPractice(userLoginId, body);
+  }
+
+  @Patch('goal')
+  @ApiOperation({
+    summary: 'Update daily word goal',
+  })
+  @ApiBody({ type: UpdateDailyGoalDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Daily goal updated successfully',
+    type: DailyHabitResponseDto,
+  })
+  async updateDailyGoal(
+    @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+    @Body() body: UpdateDailyGoalDto,
+    @Query() query: DailyHabitQueryDto,
+  ): Promise<DailyHabitResponseDto> {
+    const clientDate = query.clientDate ?? new Date().toISOString().slice(0, 10);
+    return this.dailyHabitService.updateDailyGoal(
+      userLoginId,
+      body,
+      clientDate,
+    );
   }
 }
