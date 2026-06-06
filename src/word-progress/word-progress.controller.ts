@@ -17,6 +17,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import {
+  BulkRecordAnswersDto,
   BulkResetProgressDto,
   ByWordIdsDto,
   DueWordIdsResponseDto,
@@ -60,6 +61,28 @@ export class WordProgressController {
       ...recordAnswerDto,
       userLoginId,
     });
+  }
+
+  @Post('record-answer/bulk-sync')
+  @ApiOperation({
+    summary: 'Record multiple answers synchronously',
+    description:
+      'Persists all answers in one transaction and returns updated progress rows.',
+  })
+  @ApiBody({ type: BulkRecordAnswersDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Answers recorded successfully',
+    type: [WordProgressResponseDto],
+  })
+  async recordAnswersBulkSync(
+    @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+    @Body() body: BulkRecordAnswersDto,
+  ): Promise<WordProgressResponseDto[]> {
+    return this.wordProgressService.recordAnswersBulk(
+      userLoginId,
+      body.answers,
+    );
   }
 
   @Post('due-word-ids')

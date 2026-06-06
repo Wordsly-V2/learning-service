@@ -9,6 +9,7 @@ import {
     IsUUID,
     Max,
     Min,
+    ArrayMaxSize,
     ValidateNested,
 } from 'class-validator';
 
@@ -54,15 +55,36 @@ export class RecordAnswerDto {
     quality: AnswerQuality;
 }
 
+export class BulkAnswerItemDto {
+    @ApiProperty({
+        description: 'The ID of the word being reviewed',
+        example: '01936b3e-7c8f-7890-abcd-ef1234567890',
+    })
+    @IsUUID()
+    wordId: string;
+
+    @ApiProperty({
+        description: 'Quality of the answer (0-5)',
+        enum: AnswerQuality,
+        example: 4,
+    })
+    @IsEnum(AnswerQuality)
+    quality: AnswerQuality;
+}
+
+/** Max answers per bulk practice session save. */
+export const MAX_BULK_ANSWERS = 200;
+
 export class BulkRecordAnswersDto {
     @ApiProperty({
         description: 'Array of word answers to record',
-        type: [RecordAnswerDto],
+        type: [BulkAnswerItemDto],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_BULK_ANSWERS)
     @ValidateNested({ each: true })
-    @Type(() => RecordAnswerDto)
-    answers: RecordAnswerDto[];
+    @Type(() => BulkAnswerItemDto)
+    answers: BulkAnswerItemDto[];
 }
 
 export class GetDueWordIdsDto {

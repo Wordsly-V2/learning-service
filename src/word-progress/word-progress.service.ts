@@ -1,15 +1,18 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { WordProgress } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import {
 	AnswerQuality,
+	BulkAnswerItemDto,
 	GetDueWordIdsDto,
+	MAX_BULK_ANSWERS,
 	RecordAnswerDto,
 	ScopeWordIdsDto,
 	WordProgressResponseDto,
 	WordProgressStatsDto,
 } from './dto/word-progress.dto';
+import type { Prisma } from '@prisma/client';
 
 /** Maximum interval in days — caps next review so words don't disappear for years. */
 const MAX_INTERVAL_DAYS = 60;
@@ -59,58 +62,129 @@ export class WordProgressService {
 		};
 	}
 
-	async recordAnswer(
-		recordAnswerDto: RecordAnswerDto,
-	): Promise<WordProgressResponseDto> {
-		const { wordId, quality, userLoginId } = recordAnswerDto;
+	private dedupeBulkAnswers(
+		answers: BulkAnswerItemDto[],
+	): BulkAnswerItemDto[] {
+		const byWordId = new Map<string, BulkAnswerItemDto>();
+		for (const answer of answers) {
+			byWordId.set(answer.wordId, answer);
+		}
+		return [...byWordId.values()];
+	}
 
-		const now = new Date();
+	private async upsertAnswer(
+		tx: Prisma.TransactionClient,
+		userLoginId: string,
+		wordId: string,
+		quality: AnswerQuality,
+		existing: WordProgress | null,
+		now: Date,
+	): Promise<WordProgress> {
 		const isCorrect = quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY;
 		const where = {
 			wordId_userLoginId: { wordId, userLoginId },
 		} as const;
+		const { easeFactor, interval, repetitions } = existing
+			? this.calculateNextReview(
+				quality,
+				existing.easeFactor,
+				existing.interval,
+				existing.repetitions,
+			)
+			: this.calculateNextReview(quality, 2.5, 0, 0);
+
+		const nextReviewAt = new Date(now);
+		nextReviewAt.setDate(nextReviewAt.getDate() + interval);
+
+		return tx.wordProgress.upsert({
+			where,
+			create: {
+				id: uuidv7(),
+				wordId,
+				userLoginId,
+				easeFactor,
+				interval,
+				repetitions,
+				lastReviewedAt: now,
+				nextReviewAt,
+				totalReviews: 1,
+				correctReviews: isCorrect ? 1 : 0,
+			},
+			update: {
+				easeFactor,
+				interval,
+				repetitions,
+				lastReviewedAt: now,
+				nextReviewAt,
+				totalReviews: { increment: 1 },
+				...(isCorrect && {
+					correctReviews: { increment: 1 },
+				}),
+			},
+		});
+	}
+
+	async recordAnswer(
+		recordAnswerDto: RecordAnswerDto,
+	): Promise<WordProgressResponseDto> {
+		const { wordId, quality, userLoginId } = recordAnswerDto;
+		const now = new Date();
 
 		return await this.prisma.$transaction(async (tx) => {
-			const existing = await tx.wordProgress.findUnique({ where });
-			const { easeFactor, interval, repetitions } = existing
-				? this.calculateNextReview(
-					quality,
-					existing.easeFactor,
-					existing.interval,
-					existing.repetitions,
-				)
-				: this.calculateNextReview(quality, 2.5, 0, 0);
-
-			const nextReviewAt = new Date(now);
-			nextReviewAt.setDate(nextReviewAt.getDate() + interval);
-
-			const wordProgress = await tx.wordProgress.upsert({
-				where,
-				create: {
-					id: uuidv7(),
-					wordId,
-					userLoginId,
-					easeFactor,
-					interval,
-					repetitions,
-					lastReviewedAt: now,
-					nextReviewAt,
-					totalReviews: 1,
-					correctReviews: isCorrect ? 1 : 0,
-				},
-				update: {
-					easeFactor,
-					interval,
-					repetitions,
-					lastReviewedAt: now,
-					nextReviewAt,
-					totalReviews: { increment: 1 },
-					...(isCorrect && {
-						correctReviews: { increment: 1 },
-					}),
-				},
+			const existing = await tx.wordProgress.findUnique({
+				where: { wordId_userLoginId: { wordId, userLoginId } },
 			});
+			const wordProgress = await this.upsertAnswer(
+				tx,
+				userLoginId,
+				wordId,
+				quality,
+				existing,
+				now,
+			);
 			return this.mapToProgressResponse(wordProgress);
+		});
+	}
+
+	async recordAnswersBulk(
+		userLoginId: string,
+		answers: BulkAnswerItemDto[],
+	): Promise<WordProgressResponseDto[]> {
+		if (answers.length === 0) {
+			return [];
+		}
+		if (answers.length > MAX_BULK_ANSWERS) {
+			throw new BadRequestException(
+				`Bulk save exceeds maximum of ${MAX_BULK_ANSWERS} answers`,
+			);
+		}
+
+		const deduped = this.dedupeBulkAnswers(answers);
+		const now = new Date();
+		const wordIds = deduped.map((answer) => answer.wordId);
+
+		return await this.prisma.$transaction(async (tx) => {
+			const existingList = await tx.wordProgress.findMany({
+				where: { userLoginId, wordId: { in: wordIds } },
+			});
+			const existingByWordId = new Map(
+				existingList.map((progress) => [progress.wordId, progress]),
+			);
+
+			const results: WordProgressResponseDto[] = [];
+			for (const { wordId, quality } of deduped) {
+				const wordProgress = await this.upsertAnswer(
+					tx,
+					userLoginId,
+					wordId,
+					quality,
+					existingByWordId.get(wordId) ?? null,
+					now,
+				);
+				existingByWordId.set(wordId, wordProgress);
+				results.push(this.mapToProgressResponse(wordProgress));
+			}
+			return results;
 		});
 	}
 

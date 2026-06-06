@@ -8,6 +8,7 @@ import {
   Payload,
 } from '@nestjs/microservices';
 import {
+  BulkAnswerItemDto,
   RecordAnswerDto,
   WordProgressResponseDto,
 } from './dto/word-progress.dto';
@@ -28,6 +29,19 @@ export class WordProgressConsumer {
     @Ctx() context: KafkaContext,
   ): Promise<WordProgressResponseDto> {
     const result = await this.wordProgressService.recordAnswer(payload);
+    await commitCurrentMessage(context);
+    return result;
+  }
+
+  @EventPattern(WORD_PROGRESS_EVENTS.RECORD_ANSWERS_BULK)
+  async handleRecordAnswersBulk(
+    @Payload() payload: { userLoginId: string; answers: BulkAnswerItemDto[] },
+    @Ctx() context: KafkaContext,
+  ): Promise<WordProgressResponseDto[]> {
+    const result = await this.wordProgressService.recordAnswersBulk(
+      payload.userLoginId,
+      payload.answers,
+    );
     await commitCurrentMessage(context);
     return result;
   }
