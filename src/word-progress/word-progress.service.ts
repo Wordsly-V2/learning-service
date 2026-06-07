@@ -1,5 +1,6 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { WordProgress } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import {
@@ -13,80 +14,25 @@ import {
     WordProgressStatsDto,
 } from './dto/word-progress.dto';
 import type { Prisma } from '@prisma/client';
-
-/** Maximum interval in days — caps next review so words don't disappear for years. */
-const MAX_INTERVAL_DAYS = 60;
-
-/**
- * Intraday learning step before day-based intervals (Anki-style).
- * Research: 5–7 retrieval rounds strengthen form–meaning links (Nakata 2017).
- */
-const FIRST_LEARNING_STEP_MINUTES = 10;
-
-/** interval === 0 means use FIRST_LEARNING_STEP_MINUTES instead of days. */
-const INTRADAY_INTERVAL = 0;
+import {
+    calculateNextReview,
+    toSchedulerInput,
+    type SpacedRepetitionAlgorithm,
+} from './word-progress-scheduler';
 
 @Injectable()
 export class WordProgressService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly configService: ConfigService,
+    ) {}
 
-    private calculateNextReview(
-        quality: AnswerQuality,
-        easeFactor: number,
-        interval: number,
-        repetitions: number,
-    ): { easeFactor: number; interval: number; repetitions: number } {
-        let newEaseFactor =
-            easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
-
-        if (newEaseFactor < 1.3) {
-            newEaseFactor = 1.3;
-        }
-
-        let newInterval: number;
-        let newRepetitions: number;
-
-        if (quality < AnswerQuality.CORRECT_WITH_DIFFICULTY) {
-            newRepetitions = 0;
-            newInterval = 1;
-        } else {
-            newRepetitions = repetitions + 1;
-
-            if (newRepetitions === 1) {
-                newInterval = INTRADAY_INTERVAL;
-            } else if (newRepetitions === 2) {
-                newInterval = 1;
-            } else if (newRepetitions === 3) {
-                newInterval = 6;
-            } else {
-                newInterval = Math.round(interval * newEaseFactor);
-                if (newInterval > MAX_INTERVAL_DAYS) {
-                    newInterval = MAX_INTERVAL_DAYS;
-                }
-            }
-        }
-
-        return {
-            easeFactor: newEaseFactor,
-            interval: newInterval,
-            repetitions: newRepetitions,
-        };
-    }
-
-    private scheduleNextReviewAt(
-        now: Date,
-        repetitions: number,
-        intervalDays: number,
-    ): Date {
-        const nextReviewAt = new Date(now);
-        if (repetitions === 1 && intervalDays === INTRADAY_INTERVAL) {
-            nextReviewAt.setMinutes(
-                nextReviewAt.getMinutes() + FIRST_LEARNING_STEP_MINUTES,
-            );
-            return nextReviewAt;
-        }
-        nextReviewAt.setDate(nextReviewAt.getDate() + intervalDays);
-        return nextReviewAt;
+    private get spacedRepetitionAlgorithm(): SpacedRepetitionAlgorithm {
+        return (
+            this.configService.get<SpacedRepetitionAlgorithm>(
+                'spacedRepetition.algorithm',
+            ) ?? 'fsrs'
+        );
     }
 
     private dedupeBulkAnswers(
@@ -111,20 +57,13 @@ export class WordProgressService {
         const where = {
             wordId_userLoginId: { wordId, userLoginId },
         } as const;
-        const { easeFactor, interval, repetitions } = existing
-            ? this.calculateNextReview(
-                  quality,
-                  existing.easeFactor,
-                  existing.interval,
-                  existing.repetitions,
-              )
-            : this.calculateNextReview(quality, 2.5, 0, 0);
-
-        const nextReviewAt = this.scheduleNextReviewAt(
-            now,
-            repetitions,
-            interval,
-        );
+        const { easeFactor, interval, repetitions, stability, nextReviewAt } =
+            calculateNextReview(
+                this.spacedRepetitionAlgorithm,
+                quality,
+                toSchedulerInput(existing, now),
+                now,
+            );
 
         return tx.wordProgress.upsert({
             where,
@@ -135,6 +74,7 @@ export class WordProgressService {
                 easeFactor,
                 interval,
                 repetitions,
+                stability,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: 1,
@@ -144,6 +84,7 @@ export class WordProgressService {
                 easeFactor,
                 interval,
                 repetitions,
+                stability,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: { increment: 1 },

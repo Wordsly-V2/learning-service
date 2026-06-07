@@ -14,7 +14,7 @@ import {
 } from 'class-validator';
 
 /**
- * Quality rating for spaced repetition (SM-2 algorithm)
+ * Quality rating for spaced repetition (FSRS / SM-2 compatible scale)
  * 0 = complete blackout
  * 1 = incorrect response, correct answer remembered
  * 2 = incorrect response, correct answer seemed easy to recall

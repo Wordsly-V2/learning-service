@@ -6,16 +6,17 @@ datasource db {
   provider = "postgresql"
 }
 
-// Spaced repetition tracking using SM-2 algorithm.
+// Spaced repetition tracking (FSRS by default; SM-2 via SPACED_REPETITION_ALGORITHM=sm2).
 // wordId references vocabulary-service words (no cross-DB FK).
 model WordProgress {
   id          String @id @db.Uuid
   wordId      String @db.Uuid
   userLoginId String @db.Uuid
 
-  easeFactor  Float @default(2.5)
-  interval    Int   @default(0)
-  repetitions Int   @default(0)
+  easeFactor  Float @default(2.5) // FSRS: difficulty; SM-2: ease factor
+  interval    Int   @default(0) // scheduled days until next review
+  repetitions Int   @default(0) // consecutive successful reps (FSRS reps)
+  stability   Float @default(0) // FSRS memory stability; 0 = derive from interval on read
 
   lastReviewedAt DateTime? @map("last_reviewed_at") @db.Timestamptz
   nextReviewAt   DateTime  @default(now()) @map("next_review_at") @db.Timestamptz
