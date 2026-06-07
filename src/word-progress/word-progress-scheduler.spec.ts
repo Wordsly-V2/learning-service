@@ -3,9 +3,7 @@ import { AnswerQuality } from './dto/word-progress.dto';
 import {
     answerQualityToFsrsRating,
     calculateNextReview,
-    calculateNextReviewSm2,
     FIRST_LEARNING_STEP_MINUTES,
-    INTRADAY_INTERVAL,
     MAX_INTERVAL_DAYS,
     sm2EaseToFsrsDifficulty,
     toSchedulerInput,
@@ -80,53 +78,9 @@ describe('sm2EaseToFsrsDifficulty', () => {
     });
 });
 
-describe('calculateNextReviewSm2', () => {
-    it('schedules intraday follow-up after first correct answer', () => {
-        const result = calculateNextReviewSm2(
-            AnswerQuality.PERFECT,
-            2.5,
-            0,
-            0,
-            NOW,
-        );
-
-        expect(result.repetitions).toBe(1);
-        expect(result.interval).toBe(INTRADAY_INTERVAL);
-        expect(result.nextReviewAt.getTime() - NOW.getTime()).toBe(
-            FIRST_LEARNING_STEP_MINUTES * 60 * 1000,
-        );
-    });
-
-    it('resets repetitions on failed answer', () => {
-        const result = calculateNextReviewSm2(
-            AnswerQuality.INCORRECT,
-            2.5,
-            6,
-            4,
-            NOW,
-        );
-
-        expect(result.repetitions).toBe(0);
-        expect(result.interval).toBe(1);
-    });
-
-    it('caps interval at MAX_INTERVAL_DAYS', () => {
-        const result = calculateNextReviewSm2(
-            AnswerQuality.PERFECT,
-            2.5,
-            50,
-            5,
-            NOW,
-        );
-
-        expect(result.interval).toBeLessThanOrEqual(MAX_INTERVAL_DAYS);
-    });
-});
-
-describe('calculateNextReview (fsrs)', () => {
+describe('calculateNextReview', () => {
     it('schedules a future review for a new word answered correctly', () => {
         const result = calculateNextReview(
-            'fsrs',
             AnswerQuality.CORRECT_WITH_HESITATION,
             emptyInput(),
             NOW,
@@ -139,7 +93,6 @@ describe('calculateNextReview (fsrs)', () => {
 
     it('schedules intraday relearning after a failed answer on a new word', () => {
         const result = calculateNextReview(
-            'fsrs',
             AnswerQuality.INCORRECT,
             emptyInput(),
             NOW,
@@ -154,14 +107,12 @@ describe('calculateNextReview (fsrs)', () => {
 
     it('preserves FSRS stability across consecutive reviews', () => {
         const first = calculateNextReview(
-            'fsrs',
             AnswerQuality.CORRECT_WITH_HESITATION,
             emptyInput(),
             NOW,
         );
 
         const second = calculateNextReview(
-            'fsrs',
             AnswerQuality.CORRECT_WITH_HESITATION,
             emptyInput({
                 easeFactor: first.easeFactor,
@@ -181,7 +132,6 @@ describe('calculateNextReview (fsrs)', () => {
 
     it('migrates legacy SM-2 progress without stability', () => {
         const result = calculateNextReview(
-            'fsrs',
             AnswerQuality.PERFECT,
             emptyInput({
                 easeFactor: 2.5,
@@ -212,7 +162,6 @@ describe('calculateNextReview (fsrs)', () => {
 
         for (let i = 0; i < 5; i++) {
             const result = calculateNextReview(
-                'fsrs',
                 AnswerQuality.PERFECT,
                 input,
                 now,
@@ -230,25 +179,5 @@ describe('calculateNextReview (fsrs)', () => {
             };
             now = result.nextReviewAt;
         }
-    });
-});
-
-describe('calculateNextReview algorithm selection', () => {
-    it('uses SM-2 when algorithm is sm2', () => {
-        const sm2 = calculateNextReview(
-            'sm2',
-            AnswerQuality.PERFECT,
-            emptyInput(),
-            NOW,
-        );
-        const direct = calculateNextReviewSm2(
-            AnswerQuality.PERFECT,
-            2.5,
-            0,
-            0,
-            NOW,
-        );
-
-        expect(sm2).toEqual(direct);
     });
 });

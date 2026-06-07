@@ -21,8 +21,6 @@ export const FIRST_LEARNING_STEP_MINUTES = 10;
 /** interval === 0 means use FIRST_LEARNING_STEP_MINUTES instead of days. */
 export const INTRADAY_INTERVAL = 0;
 
-export type SpacedRepetitionAlgorithm = 'fsrs' | 'sm2';
-
 export interface WordProgressSchedulerInput {
     easeFactor: number;
     interval: number;
@@ -180,7 +178,7 @@ export function fsrsCardToProgress(
     };
 }
 
-export function calculateNextReviewFsrs(
+export function calculateNextReview(
     quality: AnswerQuality,
     input: WordProgressSchedulerInput,
     now: Date,
@@ -189,90 +187,4 @@ export function calculateNextReviewFsrs(
     const rating = answerQualityToFsrsRating(quality);
     const { card: nextCard } = wordslyFsrs.next(card, now, rating);
     return fsrsCardToProgress(nextCard, now);
-}
-
-export function calculateNextReviewSm2(
-    quality: AnswerQuality,
-    easeFactor: number,
-    interval: number,
-    repetitions: number,
-    now: Date,
-): SpacedRepetitionResult {
-    let newEaseFactor =
-        easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
-
-    if (newEaseFactor < 1.3) {
-        newEaseFactor = 1.3;
-    }
-
-    let newInterval: number;
-    let newRepetitions: number;
-
-    if (quality < AnswerQuality.CORRECT_WITH_DIFFICULTY) {
-        newRepetitions = 0;
-        newInterval = 1;
-    } else {
-        newRepetitions = repetitions + 1;
-
-        if (newRepetitions === 1) {
-            newInterval = INTRADAY_INTERVAL;
-        } else if (newRepetitions === 2) {
-            newInterval = 1;
-        } else if (newRepetitions === 3) {
-            newInterval = 6;
-        } else {
-            newInterval = Math.round(interval * newEaseFactor);
-            if (newInterval > MAX_INTERVAL_DAYS) {
-                newInterval = MAX_INTERVAL_DAYS;
-            }
-        }
-    }
-
-    const nextReviewAt = scheduleNextReviewAtSm2(
-        now,
-        newRepetitions,
-        newInterval,
-    );
-
-    return {
-        easeFactor: newEaseFactor,
-        interval: newInterval,
-        repetitions: newRepetitions,
-        stability: 0,
-        nextReviewAt,
-    };
-}
-
-export function scheduleNextReviewAtSm2(
-    now: Date,
-    repetitions: number,
-    intervalDays: number,
-): Date {
-    const nextReviewAt = new Date(now);
-    if (repetitions === 1 && intervalDays === INTRADAY_INTERVAL) {
-        nextReviewAt.setMinutes(
-            nextReviewAt.getMinutes() + FIRST_LEARNING_STEP_MINUTES,
-        );
-        return nextReviewAt;
-    }
-    nextReviewAt.setDate(nextReviewAt.getDate() + intervalDays);
-    return nextReviewAt;
-}
-
-export function calculateNextReview(
-    algorithm: SpacedRepetitionAlgorithm,
-    quality: AnswerQuality,
-    input: WordProgressSchedulerInput,
-    now: Date,
-): SpacedRepetitionResult {
-    if (algorithm === 'fsrs') {
-        return calculateNextReviewFsrs(quality, input, now);
-    }
-    return calculateNextReviewSm2(
-        quality,
-        input.easeFactor,
-        input.interval,
-        input.repetitions,
-        now,
-    );
 }

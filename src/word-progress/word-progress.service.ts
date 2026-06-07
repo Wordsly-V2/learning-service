@@ -1,6 +1,5 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { WordProgress } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import {
@@ -17,23 +16,11 @@ import type { Prisma } from '@prisma/client';
 import {
     calculateNextReview,
     toSchedulerInput,
-    type SpacedRepetitionAlgorithm,
 } from './word-progress-scheduler';
 
 @Injectable()
 export class WordProgressService {
-    constructor(
-        private readonly prisma: PrismaService,
-        private readonly configService: ConfigService,
-    ) {}
-
-    private get spacedRepetitionAlgorithm(): SpacedRepetitionAlgorithm {
-        return (
-            this.configService.get<SpacedRepetitionAlgorithm>(
-                'spacedRepetition.algorithm',
-            ) ?? 'fsrs'
-        );
-    }
+    constructor(private readonly prisma: PrismaService) {}
 
     private dedupeBulkAnswers(
         answers: BulkAnswerItemDto[],
@@ -58,12 +45,7 @@ export class WordProgressService {
             wordId_userLoginId: { wordId, userLoginId },
         } as const;
         const { easeFactor, interval, repetitions, stability, nextReviewAt } =
-            calculateNextReview(
-                this.spacedRepetitionAlgorithm,
-                quality,
-                toSchedulerInput(existing, now),
-                now,
-            );
+            calculateNextReview(quality, toSchedulerInput(existing, now), now);
 
         return tx.wordProgress.upsert({
             where,

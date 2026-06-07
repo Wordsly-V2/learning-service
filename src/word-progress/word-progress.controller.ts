@@ -45,7 +45,7 @@ export class WordProgressController {
   @ApiOperation({
     summary: 'Record an answer for a word',
     description:
-      "Records the user's answer quality and updates the spaced repetition schedule using SM-2 algorithm",
+      "Records the user's answer quality and updates the spaced repetition schedule using FSRS",
   })
   @ApiBody({ type: RecordAnswerDto })
   @ApiResponse({
