@@ -5,10 +5,4 @@ export default () => ({
     database: {
         url: process.env.DATABASE_URL,
     },
-    kafka: {
-        brokers: process.env.KAFKA_BROKERS,
-        ca: process.env.KAFKA_CA,
-        cert: process.env.KAFKA_CERT,
-        key: process.env.KAFKA_KEY,
-    },
 });

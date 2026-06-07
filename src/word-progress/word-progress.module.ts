@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WordProgressController } from './word-progress.controller';
-import { WordProgressConsumer } from './word-progress.consumer';
 import { WordProgressService } from './word-progress.service';
 
 @Module({
   imports: [PrismaModule],
-  controllers: [WordProgressController, WordProgressConsumer],
+  controllers: [WordProgressController],
   providers: [WordProgressService],
   exports: [WordProgressService],
 })
