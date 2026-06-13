@@ -3,9 +3,19 @@ import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { buildCorsOptions, parseCorsOrigins } from '@/config/cors';
 
 async function bootstrap() {
     const app = await NestFactory.create(AppModule);
+
+    const configService = app.get(ConfigService);
+    const corsEnabledOrigins = configService.get<string>('corsEnabledOrigins');
+
+    const corsOptions = buildCorsOptions(corsEnabledOrigins);
+    if (corsOptions) {
+        app.enableCors(corsOptions);
+    }
+
     app.useGlobalPipes(
         new ValidationPipe({
             transform: true,
@@ -31,24 +41,13 @@ async function bootstrap() {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api', app, document);
 
-    const configService = app.get(ConfigService);
-
-    const corsEnabledOrigins = (
-        configService.get<string>('corsEnabledOrigins') ?? ''
-    ).split(',');
-
-    app.enableCors({
-        origin: corsEnabledOrigins,
-        credentials: true,
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-    });
-
     const appPort = configService.get<number>('port');
 
     await app.listen(appPort as number);
     console.log(`Learning Service HTTP is running on port ${appPort}`);
-    console.log(`CORS enabled origins: ${corsEnabledOrigins.join(', ')}`);
+    console.log(
+        `CORS enabled origins: ${parseCorsOrigins(corsEnabledOrigins).join(', ') || 'none'}`,
+    );
     console.log(
         `Swagger documentation available at http://localhost:${appPort}/api`,
     );
