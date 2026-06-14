@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Transport } from '@nestjs/microservices';
 import { buildCorsOptions, parseCorsOrigins } from '@/config/cors';
 
 async function bootstrap() {
@@ -43,6 +44,37 @@ async function bootstrap() {
 
     const appPort = configService.get<number>('port');
 
+    const brokers = configService.get<string>('kafka.brokers') ?? '';
+    const ca = configService.get<string>('kafka.ca') ?? '';
+    const cert = configService.get<string>('kafka.cert') ?? '';
+    const key = configService.get<string>('kafka.key') ?? '';
+    const brokerList = brokers.split(',').filter(Boolean);
+
+    if (brokerList.length > 0) {
+        app.connectMicroservice({
+            transport: Transport.KAFKA,
+            options: {
+                clientId: 'learning-service-client',
+                client: {
+                    brokers: brokerList,
+                    ssl: {
+                        rejectUnauthorized: true,
+                        ca,
+                        cert,
+                        key,
+                    },
+                },
+                consumer: {
+                    groupId: 'learning-service-consumer',
+                },
+                run: {
+                    autoCommit: false,
+                },
+            },
+        });
+    }
+
+    await app.startAllMicroservices();
     await app.listen(appPort as number);
     console.log(`Learning Service HTTP is running on port ${appPort}`);
     console.log(

@@ -325,6 +325,12 @@ export class WordProgressService {
         });
     }
 
+    async deleteProgressForWords(wordIds: string[]): Promise<void> {
+        await this.prisma.wordProgress.deleteMany({
+            where: { wordId: { in: wordIds } },
+        });
+    }
+
     async resetProgressBulk(
         userLoginId: string,
         wordIds: string[],
