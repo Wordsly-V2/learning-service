@@ -44,8 +44,16 @@ export class WordProgressService {
         const where = {
             wordId_userLoginId: { wordId, userLoginId },
         } as const;
-        const { easeFactor, interval, repetitions, stability, nextReviewAt } =
-            calculateNextReview(quality, toSchedulerInput(existing, now), now);
+        const {
+            easeFactor,
+            interval,
+            repetitions,
+            stability,
+            nextReviewAt,
+            state,
+            lapses,
+            learningSteps,
+        } = calculateNextReview(quality, toSchedulerInput(existing, now), now);
 
         return tx.wordProgress.upsert({
             where,
@@ -57,6 +65,9 @@ export class WordProgressService {
                 interval,
                 repetitions,
                 stability,
+                state,
+                lapses,
+                learningSteps,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: 1,
@@ -67,6 +78,9 @@ export class WordProgressService {
                 interval,
                 repetitions,
                 stability,
+                state,
+                lapses,
+                learningSteps,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: { increment: 1 },

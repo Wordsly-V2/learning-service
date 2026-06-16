@@ -16,7 +16,13 @@ model WordProgress {
   easeFactor  Float @default(2.5) // FSRS difficulty
   interval    Int   @default(0) // scheduled days until next review
   repetitions Int   @default(0) // consecutive successful reps (FSRS reps)
-  stability   Float @default(0) // FSRS memory stability; 0 = derive from interval on read
+  stability   Float @default(0) // FSRS memory stability; 0 = derive from interval on read (legacy SM-2 row)
+
+  // Full FSRS card state persisted so the scheduler reconstructs the card
+  // losslessly instead of inferring it (lapse history + learning step survive).
+  state         Int @default(0) @map("fsrs_state") // FSRS State enum: 0=New 1=Learning 2=Review 3=Relearning
+  lapses        Int @default(0) // times the card lapsed (Again on a Review card)
+  learningSteps Int @default(0) @map("learning_steps") // index into FSRS learning/relearning steps
 
   lastReviewedAt DateTime? @map("last_reviewed_at") @db.Timestamptz
   nextReviewAt   DateTime  @default(now()) @map("next_review_at") @db.Timestamptz

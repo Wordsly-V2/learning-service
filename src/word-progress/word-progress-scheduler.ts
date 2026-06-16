@@ -29,14 +29,26 @@ export interface WordProgressSchedulerInput {
     totalReviews: number;
     lastReviewedAt: Date | null;
     nextReviewAt: Date;
+    /** Persisted FSRS State enum value; null on legacy rows (inferred instead). */
+    state: number | null;
+    lapses: number;
+    learningSteps: number;
 }
 
-/** DB row fields consumed by the scheduler. Stability is optional on legacy rows. */
+/**
+ * DB row fields consumed by the scheduler. Stability and the full FSRS card
+ * state (state/lapses/learningSteps) are optional on legacy SM-2 rows.
+ */
 export type WordProgressStoredState = Omit<
     WordProgressSchedulerInput,
-    'stability'
+    'stability' | 'state' | 'lapses' | 'learningSteps'
 > &
-    Partial<Pick<WordProgressSchedulerInput, 'stability'>>;
+    Partial<
+        Pick<
+            WordProgressSchedulerInput,
+            'stability' | 'state' | 'lapses' | 'learningSteps'
+        >
+    >;
 
 export function toSchedulerInput(
     progress: WordProgressStoredState | null,
@@ -51,6 +63,9 @@ export function toSchedulerInput(
             totalReviews: 0,
             lastReviewedAt: null,
             nextReviewAt: now,
+            state: State.New,
+            lapses: 0,
+            learningSteps: 0,
         };
     }
 
@@ -62,6 +77,9 @@ export function toSchedulerInput(
         totalReviews: progress.totalReviews,
         lastReviewedAt: progress.lastReviewedAt,
         nextReviewAt: progress.nextReviewAt,
+        state: progress.state ?? null,
+        lapses: progress.lapses ?? 0,
+        learningSteps: progress.learningSteps ?? 0,
     };
 }
 
@@ -71,6 +89,9 @@ export interface SpacedRepetitionResult {
     repetitions: number;
     stability: number;
     nextReviewAt: Date;
+    state: number;
+    lapses: number;
+    learningSteps: number;
 }
 
 const wordslyFsrs = fsrs({
@@ -123,12 +144,17 @@ export function wordProgressToFsrsCard(
         return createEmptyCard(now);
     }
 
-    const difficulty =
-        input.stability > 0
-            ? input.easeFactor
-            : sm2EaseToFsrsDifficulty(input.easeFactor);
-    const stability =
-        input.stability > 0 ? input.stability : Math.max(input.interval, 0.001);
+    // FSRS-native rows (stability > 0) carry full persisted card state, so we
+    // reconstruct the card losslessly. Legacy SM-2 rows (stability === 0) have
+    // no FSRS history, so we infer state and start lapse/step counters at 0.
+    const isFsrsNative = input.stability > 0;
+
+    const difficulty = isFsrsNative
+        ? input.easeFactor
+        : sm2EaseToFsrsDifficulty(input.easeFactor);
+    const stability = isFsrsNative
+        ? input.stability
+        : Math.max(input.interval, 0.001);
 
     return {
         due: input.nextReviewAt,
@@ -138,10 +164,13 @@ export function wordProgressToFsrsCard(
             ? dateDiffInDays(input.lastReviewedAt, now)
             : 0,
         scheduled_days: input.interval,
-        learning_steps: 0,
+        learning_steps: isFsrsNative ? input.learningSteps : 0,
         reps: input.repetitions,
-        lapses: 0,
-        state: inferFsrsState(input),
+        lapses: isFsrsNative ? input.lapses : 0,
+        state:
+            isFsrsNative && input.state !== null
+                ? (input.state as State)
+                : inferFsrsState(input),
         last_review: input.lastReviewedAt ?? undefined,
     };
 }
@@ -175,6 +204,9 @@ export function fsrsCardToProgress(
         repetitions: card.reps,
         stability: card.stability,
         nextReviewAt,
+        state: card.state,
+        lapses: card.lapses,
+        learningSteps: card.learning_steps,
     };
 }
 

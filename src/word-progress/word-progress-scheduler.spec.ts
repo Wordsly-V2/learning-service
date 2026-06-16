@@ -1,4 +1,4 @@
-import { Rating } from 'ts-fsrs';
+import { Rating, State } from 'ts-fsrs';
 import { AnswerQuality } from './dto/word-progress.dto';
 import {
     answerQualityToFsrsRating,
@@ -7,6 +7,7 @@ import {
     MAX_INTERVAL_DAYS,
     sm2EaseToFsrsDifficulty,
     toSchedulerInput,
+    type SpacedRepetitionResult,
     type WordProgressSchedulerInput,
 } from './word-progress-scheduler';
 
@@ -23,7 +24,30 @@ function emptyInput(
         totalReviews: 0,
         lastReviewedAt: null,
         nextReviewAt: NOW,
+        state: State.New,
+        lapses: 0,
+        learningSteps: 0,
         ...overrides,
+    };
+}
+
+/** Feed a scheduler result back in as the next review's stored state. */
+function asNextInput(
+    result: SpacedRepetitionResult,
+    prev: WordProgressSchedulerInput,
+): WordProgressSchedulerInput {
+    return {
+        ...prev,
+        easeFactor: result.easeFactor,
+        interval: result.interval,
+        repetitions: result.repetitions,
+        stability: result.stability,
+        state: result.state,
+        lapses: result.lapses,
+        learningSteps: result.learningSteps,
+        totalReviews: prev.totalReviews + 1,
+        lastReviewedAt: prev.nextReviewAt,
+        nextReviewAt: result.nextReviewAt,
     };
 }
 
@@ -106,23 +130,16 @@ describe('calculateNextReview', () => {
     });
 
     it('preserves FSRS stability across consecutive reviews', () => {
+        const firstInput = emptyInput();
         const first = calculateNextReview(
             AnswerQuality.CORRECT_WITH_HESITATION,
-            emptyInput(),
+            firstInput,
             NOW,
         );
 
         const second = calculateNextReview(
             AnswerQuality.CORRECT_WITH_HESITATION,
-            emptyInput({
-                easeFactor: first.easeFactor,
-                interval: first.interval,
-                repetitions: first.repetitions,
-                stability: first.stability,
-                totalReviews: 1,
-                lastReviewedAt: NOW,
-                nextReviewAt: first.nextReviewAt,
-            }),
+            asNextInput(first, firstInput),
             first.nextReviewAt,
         );
 
@@ -146,6 +163,94 @@ describe('calculateNextReview', () => {
 
         expect(result.stability).toBeGreaterThan(0);
         expect(result.nextReviewAt.getTime()).toBeGreaterThan(NOW.getTime());
+    });
+
+    it('persists FSRS state across the round-trip instead of inferring it', () => {
+        // Drive a card with repeated good answers; it should reach Review state
+        // and that state must survive being decomposed to DB fields and rebuilt.
+        let input = emptyInput();
+        let now = NOW;
+        let last: SpacedRepetitionResult | null = null;
+
+        for (let i = 0; i < 6; i++) {
+            const result = calculateNextReview(
+                AnswerQuality.PERFECT,
+                input,
+                now,
+            );
+            input = asNextInput(result, input);
+            now = result.nextReviewAt;
+            last = result;
+        }
+
+        expect(last!.state).toBe(State.Review);
+    });
+
+    it('accumulates lapses across reviews instead of resetting them to 0', () => {
+        // Graduate the card to Review so that an Again answer counts as a lapse.
+        let input = emptyInput();
+        let now = NOW;
+        for (let i = 0; i < 6; i++) {
+            const result = calculateNextReview(
+                AnswerQuality.PERFECT,
+                input,
+                now,
+            );
+            input = asNextInput(result, input);
+            now = result.nextReviewAt;
+        }
+        expect(input.state).toBe(State.Review);
+        expect(input.lapses).toBe(0);
+
+        // First failure on a Review card → one lapse, persisted on the result.
+        const firstLapse = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            input,
+            now,
+        );
+        expect(firstLapse.lapses).toBe(1);
+
+        // Feed it back, graduate again, then fail again — lapses must keep
+        // climbing (the old round-trip hardcoded lapses to 0 every review).
+        input = asNextInput(firstLapse, input);
+        now = firstLapse.nextReviewAt;
+        for (let i = 0; i < 6; i++) {
+            const result = calculateNextReview(
+                AnswerQuality.PERFECT,
+                input,
+                now,
+            );
+            input = asNextInput(result, input);
+            now = result.nextReviewAt;
+        }
+        const secondLapse = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            input,
+            now,
+        );
+        expect(secondLapse.lapses).toBe(2);
+    });
+
+    it('treats legacy SM-2 rows (no FSRS state) as inferred, starting lapses at 0', () => {
+        const result = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            emptyInput({
+                easeFactor: 2.5,
+                interval: 6,
+                repetitions: 3,
+                stability: 0, // legacy marker
+                state: null,
+                lapses: 99, // ignored for legacy rows
+                totalReviews: 5,
+                lastReviewedAt: new Date('2026-06-01T10:00:00.000Z'),
+                nextReviewAt: NOW,
+            }),
+            NOW,
+        );
+
+        // Legacy rows have no FSRS lapse history; the failed answer produces the
+        // first lapse rather than carrying the bogus stored value forward.
+        expect(result.lapses).toBe(1);
     });
 
     it('caps FSRS interval at MAX_INTERVAL_DAYS', () => {
