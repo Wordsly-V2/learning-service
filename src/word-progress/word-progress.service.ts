@@ -17,6 +17,10 @@ import {
     calculateNextReview,
     toSchedulerInput,
 } from './word-progress-scheduler';
+import {
+    formatClientDate,
+    parseClientDate,
+} from '@/daily-habit/daily-habit-date.util';
 
 @Injectable()
 export class WordProgressService {
@@ -91,11 +95,50 @@ export class WordProgressService {
         });
     }
 
+    /**
+     * Upsert the per-day review aggregate that powers the accuracy/improvement
+     * chart. One atomic upsert per session (not per word) using DB-side
+     * increments so concurrent sessions never lose writes.
+     */
+    private async recordReviewStat(
+        tx: Prisma.TransactionClient,
+        userLoginId: string,
+        reviewDate: Date,
+        delta: { reviews: number; correctReviews: number; newWords: number },
+    ): Promise<void> {
+        if (delta.reviews <= 0) {
+            return;
+        }
+        await tx.dailyReviewStat.upsert({
+            where: {
+                userLoginId_reviewDate: { userLoginId, reviewDate },
+            },
+            create: {
+                userLoginId,
+                reviewDate,
+                reviews: delta.reviews,
+                correctReviews: delta.correctReviews,
+                newWords: delta.newWords,
+            },
+            update: {
+                reviews: { increment: delta.reviews },
+                correctReviews: { increment: delta.correctReviews },
+                newWords: { increment: delta.newWords },
+            },
+        });
+    }
+
+    /** Resolve the calendar date a review belongs to (client-local, else server). */
+    private resolveReviewDate(clientDate: string | undefined, now: Date): Date {
+        return parseClientDate(clientDate ?? formatClientDate(now));
+    }
+
     async recordAnswer(
         recordAnswerDto: RecordAnswerDto,
     ): Promise<WordProgressResponseDto> {
-        const { wordId, quality, userLoginId } = recordAnswerDto;
+        const { wordId, quality, userLoginId, clientDate } = recordAnswerDto;
         const now = new Date();
+        const reviewDate = this.resolveReviewDate(clientDate, now);
 
         return await this.prisma.$transaction(async (tx) => {
             const existing = await tx.wordProgress.findUnique({
@@ -109,6 +152,12 @@ export class WordProgressService {
                 existing,
                 now,
             );
+            await this.recordReviewStat(tx, userLoginId, reviewDate, {
+                reviews: 1,
+                correctReviews:
+                    quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
+                newWords: existing === null ? 1 : 0,
+            });
             return this.mapToProgressResponse(wordProgress);
         });
     }
@@ -116,6 +165,7 @@ export class WordProgressService {
     async recordAnswersBulk(
         userLoginId: string,
         answers: BulkAnswerItemDto[],
+        clientDate?: string,
     ): Promise<WordProgressResponseDto[]> {
         if (answers.length === 0) {
             return [];
@@ -128,6 +178,7 @@ export class WordProgressService {
 
         const deduped = this.dedupeBulkAnswers(answers);
         const now = new Date();
+        const reviewDate = this.resolveReviewDate(clientDate, now);
         const wordIds = deduped.map((answer) => answer.wordId);
 
         return await this.prisma.$transaction(async (tx) => {
@@ -139,18 +190,32 @@ export class WordProgressService {
             );
 
             const results: WordProgressResponseDto[] = [];
+            let correctReviews = 0;
+            let newWords = 0;
             for (const { wordId, quality } of deduped) {
+                const prior = existingByWordId.get(wordId) ?? null;
+                if (prior === null) {
+                    newWords++;
+                }
+                if (quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY) {
+                    correctReviews++;
+                }
                 const wordProgress = await this.upsertAnswer(
                     tx,
                     userLoginId,
                     wordId,
                     quality,
-                    existingByWordId.get(wordId) ?? null,
+                    prior,
                     now,
                 );
                 existingByWordId.set(wordId, wordProgress);
                 results.push(this.mapToProgressResponse(wordProgress));
             }
+            await this.recordReviewStat(tx, userLoginId, reviewDate, {
+                reviews: deduped.length,
+                correctReviews,
+                newWords,
+            });
             return results;
         });
     }

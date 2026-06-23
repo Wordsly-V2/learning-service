@@ -6,12 +6,17 @@ import {
     IsEnum,
     IsInt,
     IsOptional,
+    IsString,
     IsUUID,
+    Matches,
     Max,
     Min,
     ArrayMaxSize,
     ValidateNested,
 } from 'class-validator';
+
+/** Client local calendar date format shared with the daily-habit module. */
+export const CLIENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Quality rating for spaced repetition (mapped to FSRS grades)
@@ -53,6 +58,16 @@ export class RecordAnswerDto {
     })
     @IsEnum(AnswerQuality)
     quality: AnswerQuality;
+
+    @ApiPropertyOptional({
+        description:
+            'Client local calendar date (YYYY-MM-DD) the review happened on. Defaults to the server date when omitted.',
+        example: '2026-06-05',
+    })
+    @IsOptional()
+    @IsString()
+    @Matches(CLIENT_DATE_PATTERN)
+    clientDate?: string;
 }
 
 export class BulkAnswerItemDto {
@@ -85,6 +100,16 @@ export class BulkRecordAnswersDto {
     @ValidateNested({ each: true })
     @Type(() => BulkAnswerItemDto)
     answers: BulkAnswerItemDto[];
+
+    @ApiPropertyOptional({
+        description:
+            'Client local calendar date (YYYY-MM-DD) the session happened on. Defaults to the server date when omitted.',
+        example: '2026-06-05',
+    })
+    @IsOptional()
+    @IsString()
+    @Matches(CLIENT_DATE_PATTERN)
+    clientDate?: string;
 }
 
 export class GetDueWordIdsDto {

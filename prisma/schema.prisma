@@ -67,6 +67,22 @@ model DailyHabit {
   @@map("daily_habit")
 }
 
+// Per-day review-accuracy aggregate (one row per user per day).
+// Written incrementally on each recorded answer so the progress report can
+// chart accuracy/improvement over time without scanning the per-word table.
+// Volume/consistency come from DailyHabitDay; this adds the correctness signal.
+model DailyReviewStat {
+  userLoginId    String   @map("user_login_id") @db.Uuid
+  reviewDate     DateTime @map("review_date") @db.Date
+  reviews        Int      @default(0) // total answers recorded that day
+  correctReviews Int      @default(0) @map("correct_reviews")
+  newWords       Int      @default(0) @map("new_words") // words first seen that day
+
+  @@id([userLoginId, reviewDate])
+  @@index([userLoginId, reviewDate(sort: Desc)])
+  @@map("daily_review_stat")
+}
+
 // Per-day activity log for history and weekly stats.
 model DailyHabitDay {
   userLoginId    String   @map("user_login_id") @db.Uuid

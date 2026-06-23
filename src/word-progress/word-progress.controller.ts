@@ -82,6 +82,7 @@ export class WordProgressController {
     return this.wordProgressService.recordAnswersBulk(
       userLoginId,
       body.answers,
+      body.clientDate,
     );
   }
 
