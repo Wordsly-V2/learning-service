@@ -17,11 +17,15 @@ import {
 } from './daily-habit-date.util';
 import {
   effectiveGoalStreak,
+  freezesAfterPractice,
   habitMotivation,
   isGoalMet,
+  isStreakAtRisk,
   lastNDays,
   nextGoalStreak,
-  nextPracticeStreak,
+  nextPracticeStreakWithFreezes,
+  nextStreakMilestone,
+  resolveDisplayStreak,
 } from './daily-habit.logic';
 
 type DailyHabitRow = DailyHabit & { days?: DailyHabitDay[] };
@@ -90,12 +94,13 @@ export class DailyHabitService {
         : wordCount;
       const isNewCalendarDay = !sameDay;
 
-      const streak = nextPracticeStreak(
-        existing.streak,
-        existing.lastPracticeDate,
-        today,
-        yesterday,
-      );
+      const streakResult = nextPracticeStreakWithFreezes({
+        currentStreak: existing.streak,
+        lastPracticeDate: existing.lastPracticeDate,
+        freezes: existing.streakFreezes,
+        clientDate,
+      });
+      const streak = streakResult.streak;
       const longestStreak = Math.max(existing.longestStreak, streak);
 
       const dayRecord = await tx.dailyHabitDay.upsert({
@@ -141,6 +146,14 @@ export class DailyHabitService {
         goalUpdate.goalStreak,
       );
 
+      const streakFreezes = freezesAfterPractice({
+        currentFreezes: existing.streakFreezes,
+        freezesConsumed: streakResult.freezesConsumed,
+        prevGoalStreak: existing.goalStreak,
+        newGoalStreak: goalUpdate.goalStreak,
+        goalMetToday,
+      });
+
       return tx.dailyHabit.update({
         where: { userLoginId },
         data: {
@@ -152,6 +165,10 @@ export class DailyHabitService {
           practiceDate: today,
           lastPracticeDate: today,
           lastGoalMetDate: goalUpdate.lastGoalMetDate,
+          streakFreezes,
+          ...(streakResult.freezesConsumed > 0 && {
+            lastFreezeUsedDate: today,
+          }),
           totalWordsPracticed: { increment: wordCount },
           ...(isNewCalendarDay && {
             totalPracticeDays: { increment: 1 },
@@ -218,6 +235,14 @@ export class DailyHabitService {
         goalUpdate.goalStreak,
       );
 
+      const streakFreezes = freezesAfterPractice({
+        currentFreezes: row.streakFreezes,
+        freezesConsumed: 0,
+        prevGoalStreak: row.goalStreak,
+        newGoalStreak: goalUpdate.goalStreak,
+        goalMetToday: goalMet,
+      });
+
       const updated = await this.prisma.dailyHabit.update({
         where: { userLoginId },
         data: {
@@ -225,6 +250,7 @@ export class DailyHabitService {
           goalStreak: goalUpdate.goalStreak,
           longestGoalStreak,
           lastGoalMetDate: goalUpdate.lastGoalMetDate,
+          streakFreezes,
         },
       });
       const recentDays = await this.loadRecentDays(userLoginId, clientDate);
@@ -279,9 +305,21 @@ export class DailyHabitService {
     const sameDay = datesEqual(row.practiceDate, today);
     const wordsToday = sameDay ? row.wordsToday : 0;
     const goalMetToday = isGoalMet(wordsToday, goal);
+    const { streak: displayStreak, shielded: streakShielded } =
+      resolveDisplayStreak({
+        streak: row.streak,
+        lastPracticeDate: row.lastPracticeDate,
+        freezes: row.streakFreezes,
+        clientDate,
+      });
     const displayGoalStreak = effectiveGoalStreak(
       row.goalStreak,
       row.lastGoalMetDate,
+      clientDate,
+    );
+    const streakAtRisk = isStreakAtRisk(
+      row.streak,
+      row.lastPracticeDate,
       clientDate,
     );
     const wordsThisWeek = recentDays.reduce((sum, day) => sum + day.words, 0);
@@ -291,7 +329,7 @@ export class DailyHabitService {
     return {
       date: clientDate,
       wordsToday,
-      streak: row.streak,
+      streak: displayStreak,
       longestStreak: row.longestStreak,
       goalStreak: displayGoalStreak,
       longestGoalStreak: row.longestGoalStreak,
@@ -305,13 +343,18 @@ export class DailyHabitService {
       wordsThisWeek,
       daysActiveThisWeek,
       recentDays,
+      streakAtRisk,
+      nextMilestone: nextStreakMilestone(displayStreak),
+      streakFreezes: row.streakFreezes,
+      streakShielded,
       message: habitMotivation({
         goalMetToday,
         wordsToday,
         goal,
-        streak: row.streak,
+        streak: displayStreak,
         goalStreak: displayGoalStreak,
         wordsRemaining,
+        streakAtRisk,
       }),
     };
   }
@@ -336,6 +379,10 @@ export class DailyHabitService {
       wordsThisWeek: recentDays.reduce((sum, day) => sum + day.words, 0),
       daysActiveThisWeek: recentDays.filter((day) => day.words > 0).length,
       recentDays,
+      streakAtRisk: false,
+      nextMilestone: nextStreakMilestone(0),
+      streakFreezes: 0,
+      streakShielded: false,
       message: habitMotivation({
         goalMetToday: false,
         wordsToday: 0,

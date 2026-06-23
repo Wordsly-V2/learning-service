@@ -112,6 +112,31 @@ export class DailyHabitResponseDto {
   @ApiProperty({ type: [DailyHabitDayDto] })
   recentDays: DailyHabitDayDto[];
 
+  @ApiProperty({
+    description: 'Practiced yesterday but not yet today — one missed day breaks the streak',
+    example: true,
+  })
+  streakAtRisk: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Next streak length worth celebrating, or null when past the top milestone',
+    example: 30,
+    nullable: true,
+  })
+  nextMilestone: number | null;
+
+  @ApiProperty({
+    description: 'Banked streak freezes that auto-protect the streak on a missed day',
+    example: 1,
+  })
+  streakFreezes: number;
+
+  @ApiProperty({
+    description: 'A banked freeze is currently bridging one or more missed days',
+    example: false,
+  })
+  streakShielded: boolean;
+
   @ApiProperty({ example: 'Almost there — 2 more words to hit your goal.' })
   message: string;
 }

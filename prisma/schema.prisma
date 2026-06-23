@@ -56,6 +56,9 @@ model DailyHabit {
   totalWordsPracticed Int @default(0) @map("total_words_practiced")
   totalPracticeDays   Int @default(0) @map("total_practice_days")
 
+  streakFreezes      Int       @default(0) @map("streak_freezes")
+  lastFreezeUsedDate DateTime? @map("last_freeze_used_date") @db.Date
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 

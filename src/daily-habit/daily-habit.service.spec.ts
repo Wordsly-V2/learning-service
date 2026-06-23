@@ -100,6 +100,8 @@ describe('DailyHabitService', () => {
       lastGoalMetDate: parseClientDate(yesterday),
       totalWordsPracticed: 20,
       totalPracticeDays: 2,
+      streakFreezes: 0,
+      lastFreezeUsedDate: null,
     });
     prisma.dailyHabitDay.upsert.mockResolvedValue({
       wordsPracticed: 3,

@@ -1,9 +1,16 @@
 import {
   effectiveGoalStreak,
+  effectivePracticeStreak,
+  freezesAfterPractice,
   habitMotivation,
+  isStreakAtRisk,
+  isStreakMilestone,
   lastNDays,
   nextGoalStreak,
   nextPracticeStreak,
+  nextPracticeStreakWithFreezes,
+  nextStreakMilestone,
+  resolveDisplayStreak,
 } from './daily-habit.logic';
 import { parseClientDate } from './daily-habit-date.util';
 
@@ -62,5 +69,179 @@ describe('daily-habit.logic', () => {
         wordsRemaining: 2,
       }),
     ).toContain('Almost there');
+  });
+
+  it('keeps the practice streak alive when last practice was yesterday', () => {
+    expect(
+      effectivePracticeStreak(9, parseClientDate(yesterday), today),
+    ).toBe(9);
+  });
+
+  it('lapses a stale practice streak after a missed day', () => {
+    expect(
+      effectivePracticeStreak(9, parseClientDate('2026-06-03'), today),
+    ).toBe(0);
+  });
+
+  it('keeps the streak shown when already practiced today', () => {
+    expect(effectivePracticeStreak(9, parseClientDate(today), today)).toBe(9);
+  });
+
+  it('flags a streak as at risk when yesterday was the last practice', () => {
+    expect(isStreakAtRisk(9, parseClientDate(yesterday), today)).toBe(true);
+  });
+
+  it('does not flag at risk once practiced today', () => {
+    expect(isStreakAtRisk(9, parseClientDate(today), today)).toBe(false);
+  });
+
+  it('does not flag at risk for a broken streak', () => {
+    expect(isStreakAtRisk(9, parseClientDate('2026-06-03'), today)).toBe(false);
+  });
+
+  it('finds the next streak milestone', () => {
+    expect(nextStreakMilestone(0)).toBe(7);
+    expect(nextStreakMilestone(7)).toBe(14);
+    expect(nextStreakMilestone(29)).toBe(30);
+    expect(nextStreakMilestone(365)).toBeNull();
+  });
+
+  it('recognizes milestone streak lengths', () => {
+    expect(isStreakMilestone(7)).toBe(true);
+    expect(isStreakMilestone(8)).toBe(false);
+  });
+
+  it('warns when a live streak is at risk and nothing done today', () => {
+    expect(
+      habitMotivation({
+        goalMetToday: false,
+        wordsToday: 0,
+        goal: 10,
+        streak: 9,
+        goalStreak: 0,
+        wordsRemaining: 10,
+        streakAtRisk: true,
+      }),
+    ).toContain("Don't lose your 9-day streak");
+  });
+
+  it('celebrates hitting a milestone', () => {
+    expect(
+      habitMotivation({
+        goalMetToday: true,
+        wordsToday: 10,
+        goal: 10,
+        streak: 7,
+        goalStreak: 3,
+        wordsRemaining: 0,
+      }),
+    ).toContain('milestone');
+  });
+
+  describe('streak freezes', () => {
+    const twoDaysAgo = '2026-06-03';
+    const threeDaysAgo = '2026-06-02';
+
+    it('shields the streak when one day is missed and a freeze is banked', () => {
+      expect(
+        resolveDisplayStreak({
+          streak: 9,
+          lastPracticeDate: parseClientDate(twoDaysAgo),
+          freezes: 1,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 9, shielded: true });
+    });
+
+    it('breaks the streak when missed days exceed banked freezes', () => {
+      expect(
+        resolveDisplayStreak({
+          streak: 9,
+          lastPracticeDate: parseClientDate(threeDaysAgo),
+          freezes: 1,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 0, shielded: false });
+    });
+
+    it('treats yesterday as live without a shield', () => {
+      expect(
+        resolveDisplayStreak({
+          streak: 9,
+          lastPracticeDate: parseClientDate(yesterday),
+          freezes: 2,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 9, shielded: false });
+    });
+
+    it('consumes a freeze to bridge a missed day on practice', () => {
+      expect(
+        nextPracticeStreakWithFreezes({
+          currentStreak: 9,
+          lastPracticeDate: parseClientDate(twoDaysAgo),
+          freezes: 1,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 10, freezesConsumed: 1 });
+    });
+
+    it('resets when the gap is too wide for freezes', () => {
+      expect(
+        nextPracticeStreakWithFreezes({
+          currentStreak: 9,
+          lastPracticeDate: parseClientDate(threeDaysAgo),
+          freezes: 1,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 1, freezesConsumed: 0 });
+    });
+
+    it('continues from yesterday without spending a freeze', () => {
+      expect(
+        nextPracticeStreakWithFreezes({
+          currentStreak: 9,
+          lastPracticeDate: parseClientDate(yesterday),
+          freezes: 2,
+          clientDate: today,
+        }),
+      ).toEqual({ streak: 10, freezesConsumed: 0 });
+    });
+
+    it('earns a freeze on crossing the goal-streak threshold', () => {
+      expect(
+        freezesAfterPractice({
+          currentFreezes: 0,
+          freezesConsumed: 0,
+          prevGoalStreak: 4,
+          newGoalStreak: 5,
+          goalMetToday: true,
+        }),
+      ).toBe(1);
+    });
+
+    it('caps the freeze balance', () => {
+      expect(
+        freezesAfterPractice({
+          currentFreezes: 2,
+          freezesConsumed: 0,
+          prevGoalStreak: 9,
+          newGoalStreak: 10,
+          goalMetToday: true,
+        }),
+      ).toBe(2);
+    });
+
+    it('spends consumed freezes before awarding new ones', () => {
+      expect(
+        freezesAfterPractice({
+          currentFreezes: 1,
+          freezesConsumed: 1,
+          prevGoalStreak: 3,
+          newGoalStreak: 4,
+          goalMetToday: true,
+        }),
+      ).toBe(0);
+    });
   });
 });
