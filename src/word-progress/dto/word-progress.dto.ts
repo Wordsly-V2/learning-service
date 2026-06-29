@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { LevelEventDto } from '@/user-level/dto/user-level.dto';
 import { Transform, Type } from 'class-transformer';
 import {
     IsArray,
@@ -216,6 +217,13 @@ export class WordProgressResponseDto {
         example: 80,
     })
     successRate: number;
+
+    @ApiPropertyOptional({
+        description:
+            'XP/level result of recording this answer (single-answer endpoint only). Present when XP was awarded so the client can show a level-up.',
+        type: LevelEventDto,
+    })
+    levelEvent?: LevelEventDto;
 }
 
 export class DueWordDto extends WordProgressResponseDto {

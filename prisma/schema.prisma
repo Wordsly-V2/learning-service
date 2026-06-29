@@ -83,6 +83,25 @@ model DailyReviewStat {
   @@map("daily_review_stat")
 }
 
+// Cumulative XP and derived learning level (one row per user, lazily created).
+// XP is written from two domains in their own transactions — per-answer learning
+// XP (word-progress) and consistency XP (daily-habit) — so it lives on its own
+// row that both can increment atomically, mirroring DailyReviewStat.
+model UserLevel {
+  userLoginId String @id @map("user_login_id") @db.Uuid
+
+  totalXp Int @default(0) @map("total_xp")
+  // Denormalized cache of levelFromXp(totalXp); recomputed on every write so it
+  // can't drift. totalXp stays the source of truth. Persisted so a level-up can
+  // be detected by comparing pre/post level within the same transaction.
+  level Int @default(1)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("user_level")
+}
+
 // Per-day activity log for history and weekly stats.
 model DailyHabitDay {
   userLoginId    String   @map("user_login_id") @db.Uuid

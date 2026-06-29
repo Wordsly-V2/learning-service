@@ -43,7 +43,10 @@ describe('DailyHabitService', () => {
         fn(prisma),
       ),
     };
-    service = new DailyHabitService(prisma as never);
+    const userLevelService = {
+      awardXp: jest.fn().mockResolvedValue({ leveledUp: false }),
+    };
+    service = new DailyHabitService(prisma as never, userLevelService as never);
   });
 
   it('returns empty state when no row exists', async () => {

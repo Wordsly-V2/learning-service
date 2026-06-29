@@ -21,10 +21,15 @@ import {
     formatClientDate,
     parseClientDate,
 } from '@/daily-habit/daily-habit-date.util';
+import { UserLevelService } from '@/user-level/user-level.service';
+import { isMastered, xpForAnswer } from '@/user-level/user-level.logic';
 
 @Injectable()
 export class WordProgressService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly userLevelService: UserLevelService,
+    ) {}
 
     private dedupeBulkAnswers(
         answers: BulkAnswerItemDto[],
@@ -158,7 +163,23 @@ export class WordProgressService {
                     quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
                 newWords: existing === null ? 1 : 0,
             });
-            return this.mapToProgressResponse(wordProgress);
+            const xp = xpForAnswer({
+                quality,
+                isNewWord: existing === null,
+                wasMastered: existing
+                    ? isMastered(existing.state, existing.interval)
+                    : false,
+                isMastered: isMastered(
+                    wordProgress.state,
+                    wordProgress.interval,
+                ),
+            });
+            const levelEvent = await this.userLevelService.awardXp(
+                tx,
+                userLoginId,
+                xp,
+            );
+            return { ...this.mapToProgressResponse(wordProgress), levelEvent };
         });
     }
 
@@ -192,6 +213,7 @@ export class WordProgressService {
             const results: WordProgressResponseDto[] = [];
             let correctReviews = 0;
             let newWords = 0;
+            let xpEarned = 0;
             for (const { wordId, quality } of deduped) {
                 const prior = existingByWordId.get(wordId) ?? null;
                 if (prior === null) {
@@ -208,6 +230,17 @@ export class WordProgressService {
                     prior,
                     now,
                 );
+                xpEarned += xpForAnswer({
+                    quality,
+                    isNewWord: prior === null,
+                    wasMastered: prior
+                        ? isMastered(prior.state, prior.interval)
+                        : false,
+                    isMastered: isMastered(
+                        wordProgress.state,
+                        wordProgress.interval,
+                    ),
+                });
                 existingByWordId.set(wordId, wordProgress);
                 results.push(this.mapToProgressResponse(wordProgress));
             }
@@ -216,6 +249,9 @@ export class WordProgressService {
                 correctReviews,
                 newWords,
             });
+            // One XP award for the whole session; the level snapshot is read via
+            // GET /level after the session, so the array response stays unchanged.
+            await this.userLevelService.awardXp(tx, userLoginId, xpEarned);
             return results;
         });
     }

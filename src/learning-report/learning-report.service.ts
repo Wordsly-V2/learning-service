@@ -13,6 +13,7 @@ import {
     MASTERED_INTERVAL_DAYS,
     ReportPeriod,
 } from './learning-report.logic';
+import { computeLevelProgress } from '@/user-level/user-level.logic';
 import {
     LearningReportResponseDto,
     ReportBucketDto,
@@ -37,8 +38,14 @@ export class LearningReportService {
         // Independent reads run together. Time-series scans are bounded by the
         // window (≤365 rows); mastery uses aggregate queries so the per-word
         // table is never loaded into memory.
-        const [habitDays, reviewStats, stateGroups, masteredWords, habit] =
-            await Promise.all([
+        const [
+            habitDays,
+            reviewStats,
+            stateGroups,
+            masteredWords,
+            habit,
+            userLevel,
+        ] = await Promise.all([
                 this.prisma.dailyHabitDay.findMany({
                     where: {
                         userLoginId,
@@ -75,6 +82,7 @@ export class LearningReportService {
                     },
                 }),
                 this.prisma.dailyHabit.findUnique({ where: { userLoginId } }),
+                this.prisma.userLevel.findUnique({ where: { userLoginId } }),
             ]);
 
         // Seed every bucket so empty days/months render as zeros (no gaps).
@@ -198,6 +206,7 @@ export class LearningReportService {
                 totalStarted,
             },
             streaks,
+            level: computeLevelProgress(userLevel?.totalXp ?? 0),
             achievements,
         };
     }

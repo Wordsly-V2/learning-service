@@ -21,18 +21,28 @@ import {
   habitMotivation,
   isGoalMet,
   isStreakAtRisk,
+  isStreakMilestone,
   lastNDays,
   nextGoalStreak,
   nextPracticeStreakWithFreezes,
   nextStreakMilestone,
   resolveDisplayStreak,
 } from './daily-habit.logic';
+import { UserLevelService } from '@/user-level/user-level.service';
+import {
+  XP_DAILY_GOAL_MET,
+  XP_FIRST_PRACTICE_OF_DAY,
+  XP_STREAK_MILESTONE,
+} from '@/user-level/user-level.logic';
 
 type DailyHabitRow = DailyHabit & { days?: DailyHabitDay[] };
 
 @Injectable()
 export class DailyHabitService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly userLevelService: UserLevelService,
+  ) {}
 
   async getDailyHabit(
     userLoginId: string,
@@ -85,6 +95,13 @@ export class DailyHabitService {
             goalMet: goalMetToday,
           },
         });
+        // First practice ever = first of the day; goal XP if the goal was met.
+        await this.userLevelService.awardXp(
+          tx,
+          userLoginId,
+          XP_FIRST_PRACTICE_OF_DAY +
+            (goalMetToday ? XP_DAILY_GOAL_MET : 0),
+        );
         return row;
       }
 
@@ -153,6 +170,23 @@ export class DailyHabitService {
         newGoalStreak: goalUpdate.goalStreak,
         goalMetToday,
       });
+
+      // Consistency XP, each granted once on its crossing:
+      // first practice of a new day, the goal first met today, and the streak
+      // landing on a milestone (streak only grows on a genuinely new day).
+      const goalNewlyMetToday =
+        goalMetToday &&
+        !(
+          existing.lastGoalMetDate &&
+          datesEqual(existing.lastGoalMetDate, today)
+        );
+      const streakMilestoneReached =
+        streak > existing.streak && isStreakMilestone(streak);
+      const habitXp =
+        (isNewCalendarDay ? XP_FIRST_PRACTICE_OF_DAY : 0) +
+        (goalNewlyMetToday ? XP_DAILY_GOAL_MET : 0) +
+        (streakMilestoneReached ? XP_STREAK_MILESTONE : 0);
+      await this.userLevelService.awardXp(tx, userLoginId, habitXp);
 
       return tx.dailyHabit.update({
         where: { userLoginId },

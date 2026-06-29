@@ -7,6 +7,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { DailyHabitModule } from './daily-habit/daily-habit.module';
 import { WordProgressModule } from './word-progress/word-progress.module';
 import { LearningReportModule } from './learning-report/learning-report.module';
+import { UserLevelModule } from './user-level/user-level.module';
 
 @Module({
     imports: [
@@ -18,6 +19,7 @@ import { LearningReportModule } from './learning-report/learning-report.module';
         WordProgressModule,
         DailyHabitModule,
         LearningReportModule,
+        UserLevelModule,
     ],
     controllers: [AppController],
     providers: [AppService],
