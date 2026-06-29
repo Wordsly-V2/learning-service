@@ -90,8 +90,11 @@ export function isStreakMilestone(streak: number): boolean {
     return (STREAK_MILESTONES as readonly number[]).includes(streak);
 }
 
-/** Earn one streak freeze for every N consecutive goal-met days. */
-export const FREEZE_EARN_EVERY_GOAL_DAYS = 5;
+/**
+ * Goal-streak lengths that each earn one streak freeze: the first after a
+ * 3-day goal streak, the last after a 5-day goal streak.
+ */
+export const FREEZE_EARN_GOAL_STREAKS = [3, 5] as const;
 /** Most freezes a user can bank at once. */
 export const MAX_STREAK_FREEZES = 2;
 
@@ -175,12 +178,12 @@ export function freezesAfterPractice(params: {
         goalMetToday,
     } = params;
     let freezes = Math.max(0, currentFreezes - freezesConsumed);
-    const earnedNew =
-        goalMetToday &&
-        newGoalStreak > prevGoalStreak &&
-        newGoalStreak % FREEZE_EARN_EVERY_GOAL_DAYS === 0;
-    if (earnedNew && freezes < MAX_STREAK_FREEZES) {
-        freezes += 1;
+    if (goalMetToday && newGoalStreak > prevGoalStreak) {
+        const earned = FREEZE_EARN_GOAL_STREAKS.filter(
+            (threshold) =>
+                threshold > prevGoalStreak && threshold <= newGoalStreak,
+        ).length;
+        freezes += earned;
     }
     return Math.min(freezes, MAX_STREAK_FREEZES);
 }

@@ -208,13 +208,37 @@ describe('daily-habit.logic', () => {
       ).toEqual({ streak: 10, freezesConsumed: 0 });
     });
 
-    it('earns a freeze on crossing the goal-streak threshold', () => {
+    it('earns the first freeze after a 3-day goal streak', () => {
       expect(
         freezesAfterPractice({
           currentFreezes: 0,
           freezesConsumed: 0,
+          prevGoalStreak: 2,
+          newGoalStreak: 3,
+          goalMetToday: true,
+        }),
+      ).toBe(1);
+    });
+
+    it('earns the last freeze after a 5-day goal streak', () => {
+      expect(
+        freezesAfterPractice({
+          currentFreezes: 1,
+          freezesConsumed: 0,
           prevGoalStreak: 4,
           newGoalStreak: 5,
+          goalMetToday: true,
+        }),
+      ).toBe(2);
+    });
+
+    it('earns nothing on goal-streak days between thresholds', () => {
+      expect(
+        freezesAfterPractice({
+          currentFreezes: 1,
+          freezesConsumed: 0,
+          prevGoalStreak: 3,
+          newGoalStreak: 4,
           goalMetToday: true,
         }),
       ).toBe(1);
