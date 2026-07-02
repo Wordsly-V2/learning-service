@@ -5,9 +5,9 @@ import { DailyHabitController } from './daily-habit.controller';
 import { DailyHabitService } from './daily-habit.service';
 
 @Module({
-  imports: [PrismaModule, UserLevelModule],
-  controllers: [DailyHabitController],
-  providers: [DailyHabitService],
-  exports: [DailyHabitService],
+    imports: [PrismaModule, UserLevelModule],
+    controllers: [DailyHabitController],
+    providers: [DailyHabitService],
+    exports: [DailyHabitService],
 })
 export class DailyHabitModule {}

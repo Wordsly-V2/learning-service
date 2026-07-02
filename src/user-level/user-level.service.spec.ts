@@ -55,7 +55,11 @@ describe('UserLevelService', () => {
                 level: 1,
             });
 
-            const event = await service.awardXp(prisma as never, userLoginId, 30);
+            const event = await service.awardXp(
+                prisma as never,
+                userLoginId,
+                30,
+            );
 
             expect(prisma.userLevel.upsert).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -77,7 +81,11 @@ describe('UserLevelService', () => {
                 level: 2,
             });
 
-            const event = await service.awardXp(prisma as never, userLoginId, 10);
+            const event = await service.awardXp(
+                prisma as never,
+                userLoginId,
+                10,
+            );
 
             expect(event.leveledUp).toBe(false);
             expect(event.level).toBe(2);
@@ -87,7 +95,11 @@ describe('UserLevelService', () => {
         it('creates the row for a brand-new user', async () => {
             prisma.userLevel.findUnique.mockResolvedValue(null);
 
-            const event = await service.awardXp(prisma as never, userLoginId, 25);
+            const event = await service.awardXp(
+                prisma as never,
+                userLoginId,
+                25,
+            );
 
             expect(prisma.userLevel.upsert).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -105,7 +117,11 @@ describe('UserLevelService', () => {
                 level: 2,
             });
 
-            const event = await service.awardXp(prisma as never, userLoginId, 0);
+            const event = await service.awardXp(
+                prisma as never,
+                userLoginId,
+                0,
+            );
 
             expect(prisma.userLevel.upsert).not.toHaveBeenCalled();
             expect(event.xpEarned).toBe(0);

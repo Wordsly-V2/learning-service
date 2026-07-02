@@ -1,10 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 import { CLIENT_DATE_PATTERN } from '@/word-progress/dto/word-progress.dto';
-import type {
-    ReportGranularity,
-    ReportPeriod,
-} from '../learning-report.logic';
+import type { ReportGranularity, ReportPeriod } from '../learning-report.logic';
 
 export const REPORT_PERIODS: ReportPeriod[] = ['week', 'month', 'year'];
 
@@ -43,7 +40,10 @@ export class ReportBucketDto {
     })
     key: string;
 
-    @ApiProperty({ description: 'First calendar date of the bucket', example: '2026-06-23' })
+    @ApiProperty({
+        description: 'First calendar date of the bucket',
+        example: '2026-06-23',
+    })
     start: string;
 
     @ApiProperty({ example: 12 })
@@ -56,16 +56,23 @@ export class ReportBucketDto {
     correctReviews: number;
 
     @ApiProperty({
-        description: 'Correct-answer percentage, or null when no reviews that bucket',
+        description:
+            'Correct-answer percentage, or null when no reviews that bucket',
         example: 83.3,
         nullable: true,
     })
     accuracy: number | null;
 
-    @ApiProperty({ description: 'Days with any practice in this bucket', example: 1 })
+    @ApiProperty({
+        description: 'Days with any practice in this bucket',
+        example: 1,
+    })
     daysActive: number;
 
-    @ApiProperty({ description: 'Days the daily goal was met in this bucket', example: 1 })
+    @ApiProperty({
+        description: 'Days the daily goal was met in this bucket',
+        example: 1,
+    })
     goalMetDays: number;
 
     @ApiProperty({ description: 'Words first seen in this bucket', example: 5 })
@@ -93,16 +100,28 @@ export class ReportSummaryDto {
 }
 
 export class ReportMasteryDto {
-    @ApiProperty({ description: 'Cards still in the learning/relearning phase', example: 30 })
+    @ApiProperty({
+        description: 'Cards still in the learning/relearning phase',
+        example: 30,
+    })
     learningWords: number;
 
-    @ApiProperty({ description: 'Cards in review but not yet mastered', example: 45 })
+    @ApiProperty({
+        description: 'Cards in review but not yet mastered',
+        example: 45,
+    })
     reviewWords: number;
 
-    @ApiProperty({ description: 'Review cards with a long interval', example: 25 })
+    @ApiProperty({
+        description: 'Review cards with a long interval',
+        example: 25,
+    })
     masteredWords: number;
 
-    @ApiProperty({ description: 'Total words the user has started learning', example: 100 })
+    @ApiProperty({
+        description: 'Total words the user has started learning',
+        example: 100,
+    })
     totalStarted: number;
 }
 
@@ -124,22 +143,37 @@ export class ReportLevelDto {
     @ApiProperty({ description: 'Current numeric level', example: 7 })
     level: number;
 
-    @ApiProperty({ description: 'Named rank tier for the level', example: 'Apprentice' })
+    @ApiProperty({
+        description: 'Named rank tier for the level',
+        example: 'Apprentice',
+    })
     rank: string;
 
     @ApiProperty({ description: 'Cumulative XP earned all-time', example: 430 })
     totalXp: number;
 
-    @ApiProperty({ description: 'XP earned within the current level', example: 130 })
+    @ApiProperty({
+        description: 'XP earned within the current level',
+        example: 130,
+    })
     currentLevelXp: number;
 
-    @ApiProperty({ description: 'Total XP span of the current level', example: 200 })
+    @ApiProperty({
+        description: 'Total XP span of the current level',
+        example: 200,
+    })
     xpForThisLevel: number;
 
-    @ApiProperty({ description: 'XP still needed to reach the next level', example: 70 })
+    @ApiProperty({
+        description: 'XP still needed to reach the next level',
+        example: 70,
+    })
     xpToNextLevel: number;
 
-    @ApiProperty({ description: 'Progress through the current level, 0..100', example: 65 })
+    @ApiProperty({
+        description: 'Progress through the current level, 0..100',
+        example: 65,
+    })
     progress: number;
 }
 
@@ -156,7 +190,10 @@ export class ReportAchievementDto {
     @ApiProperty({ example: true })
     achieved: boolean;
 
-    @ApiProperty({ description: 'Current progress value toward the target', example: 21 })
+    @ApiProperty({
+        description: 'Current progress value toward the target',
+        example: 21,
+    })
     value: number;
 
     @ApiProperty({ example: 7 })

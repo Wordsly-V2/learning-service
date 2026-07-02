@@ -139,9 +139,9 @@ describe('xpForAnswer', () => {
     });
 
     it('adds the mastery bonus only on the crossing into mastery', () => {
-        expect(
-            xpForAnswer({ ...base, quality: 5, isMastered: true }),
-        ).toBe(XP_PER_REVIEW + XP_CORRECT + XP_PERFECT + XP_MASTERED);
+        expect(xpForAnswer({ ...base, quality: 5, isMastered: true })).toBe(
+            XP_PER_REVIEW + XP_CORRECT + XP_PERFECT + XP_MASTERED,
+        );
         // Already mastered before this answer -> no repeat bonus.
         expect(
             xpForAnswer({

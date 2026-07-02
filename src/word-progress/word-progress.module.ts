@@ -6,9 +6,9 @@ import { WordProgressController } from './word-progress.controller';
 import { WordProgressService } from './word-progress.service';
 
 @Module({
-  imports: [PrismaModule, UserLevelModule],
-  controllers: [WordProgressController, WordProgressConsumer],
-  providers: [WordProgressService],
-  exports: [WordProgressService],
+    imports: [PrismaModule, UserLevelModule],
+    controllers: [WordProgressController, WordProgressConsumer],
+    providers: [WordProgressService],
+    exports: [WordProgressService],
 })
 export class WordProgressModule {}

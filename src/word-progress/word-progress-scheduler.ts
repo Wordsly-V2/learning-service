@@ -10,7 +10,7 @@ import {
 import { AnswerQuality } from './dto/word-progress.dto';
 
 /** Maximum interval in days — caps next review so words don't disappear for years. */
-export const MAX_INTERVAL_DAYS = 60;
+export const MAX_INTERVAL_DAYS = 365;
 
 /**
  * Intraday learning step before day-based intervals (Anki-style).
@@ -94,10 +94,12 @@ export interface SpacedRepetitionResult {
     learningSteps: number;
 }
 
+// Fuzz spreads reviews of words learned together across neighboring days so
+// they don't pile up on the same date (deterministic per card+time in ts-fsrs).
 const wordslyFsrs = fsrs({
     request_retention: 0.9,
     maximum_interval: MAX_INTERVAL_DAYS,
-    enable_fuzz: false,
+    enable_fuzz: true,
     enable_short_term: true,
     learning_steps: [`${FIRST_LEARNING_STEP_MINUTES}m`],
     relearning_steps: [`${FIRST_LEARNING_STEP_MINUTES}m`],

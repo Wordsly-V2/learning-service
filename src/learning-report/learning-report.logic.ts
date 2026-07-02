@@ -99,10 +99,7 @@ export function bucketKeyForDate(
 }
 
 /** Round an accuracy ratio to one decimal percent, or null when no reviews. */
-export function accuracyPercent(
-    correct: number,
-    total: number,
-): number | null {
+export function accuracyPercent(correct: number, total: number): number | null {
     if (total <= 0) {
         return null;
     }

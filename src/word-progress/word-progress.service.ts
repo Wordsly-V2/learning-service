@@ -24,6 +24,15 @@ import {
 import { UserLevelService } from '@/user-level/user-level.service';
 import { isMastered, xpForAnswer } from '@/user-level/user-level.logic';
 
+type ProgressStatsRow = Pick<
+    WordProgress,
+    | 'wordId'
+    | 'repetitions'
+    | 'nextReviewAt'
+    | 'totalReviews'
+    | 'correctReviews'
+>;
+
 @Injectable()
 export class WordProgressService {
     constructor(
@@ -267,19 +276,20 @@ export class WordProgressService {
 
         const now = new Date();
 
+        // Most-overdue first: the words closest to being forgotten are the ones
+        // whose review matters most, and the DB does the sort + limit for us.
         const dueRows = await this.prisma.wordProgress.findMany({
             where: {
                 userLoginId,
                 nextReviewAt: { lte: now },
                 wordId: { in: wordIds },
             },
-            select: { wordId: true, nextReviewAt: true },
+            select: { wordId: true },
+            orderBy: { nextReviewAt: 'asc' },
+            take: limit,
         });
 
-        const dueIds = dueRows
-            .sort((a, b) => b.nextReviewAt.getTime() - a.nextReviewAt.getTime())
-            .map((r) => r.wordId)
-            .slice(0, limit);
+        const dueIds = dueRows.map((r) => r.wordId);
 
         if (!includeNew || dueIds.length >= limit) {
             return dueIds;
@@ -300,7 +310,7 @@ export class WordProgressService {
 
     private computeStatsFromProgresses(
         totalWords: number,
-        wordProgresses: WordProgress[],
+        wordProgresses: ProgressStatsRow[],
         now: Date,
     ): WordProgressStatsDto {
         const newWords = totalWords - wordProgresses.length;
@@ -338,15 +348,23 @@ export class WordProgressService {
         };
     }
 
+    /** Stats only need a handful of columns — avoid hauling full rows into memory. */
     private async getProgressForWordIds(
         userLoginId: string,
         wordIds: string[],
-    ): Promise<WordProgress[]> {
+    ): Promise<ProgressStatsRow[]> {
         if (wordIds.length === 0) {
             return [];
         }
         return this.prisma.wordProgress.findMany({
             where: { userLoginId, wordId: { in: wordIds } },
+            select: {
+                wordId: true,
+                repetitions: true,
+                nextReviewAt: true,
+                totalReviews: true,
+                correctReviews: true,
+            },
         });
     }
 
@@ -387,7 +405,7 @@ export class WordProgressService {
         for (const scope of scopes) {
             const progresses = scope.wordIds
                 .map((wordId) => progressByWordId.get(wordId))
-                .filter((p): p is WordProgress => p != null);
+                .filter((p): p is ProgressStatsRow => p != null);
             result.set(
                 scope.scopeId,
                 this.computeStatsFromProgresses(
@@ -423,9 +441,12 @@ export class WordProgressService {
         const progressList = await this.prisma.wordProgress.findMany({
             where: { userLoginId, wordId: { in: wordIds } },
         });
+        const progressByWordId = new Map(
+            progressList.map((p) => [p.wordId, p]),
+        );
         const result = new Map<string, WordProgressResponseDto | null>();
         for (const wordId of wordIds) {
-            const progress = progressList.find((p) => p.wordId === wordId);
+            const progress = progressByWordId.get(wordId);
             result.set(
                 wordId,
                 progress ? this.mapToProgressResponse(progress) : null,

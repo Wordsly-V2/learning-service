@@ -1,6 +1,9 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
-import { formatClientDate, parseClientDate } from '@/daily-habit/daily-habit-date.util';
+import {
+    formatClientDate,
+    parseClientDate,
+} from '@/daily-habit/daily-habit-date.util';
 import {
     effectiveGoalStreak,
     resolveDisplayStreak,
@@ -46,44 +49,44 @@ export class LearningReportService {
             habit,
             userLevel,
         ] = await Promise.all([
-                this.prisma.dailyHabitDay.findMany({
-                    where: {
-                        userLoginId,
-                        practiceDate: { gte: start, lte: end },
-                    },
-                    select: {
-                        practiceDate: true,
-                        wordsPracticed: true,
-                        goalMet: true,
-                    },
-                }),
-                this.prisma.dailyReviewStat.findMany({
-                    where: {
-                        userLoginId,
-                        reviewDate: { gte: start, lte: end },
-                    },
-                    select: {
-                        reviewDate: true,
-                        reviews: true,
-                        correctReviews: true,
-                        newWords: true,
-                    },
-                }),
-                this.prisma.wordProgress.groupBy({
-                    by: ['state'],
-                    where: { userLoginId },
-                    _count: { _all: true },
-                }),
-                this.prisma.wordProgress.count({
-                    where: {
-                        userLoginId,
-                        state: FSRS_STATE_REVIEW,
-                        interval: { gte: MASTERED_INTERVAL_DAYS },
-                    },
-                }),
-                this.prisma.dailyHabit.findUnique({ where: { userLoginId } }),
-                this.prisma.userLevel.findUnique({ where: { userLoginId } }),
-            ]);
+            this.prisma.dailyHabitDay.findMany({
+                where: {
+                    userLoginId,
+                    practiceDate: { gte: start, lte: end },
+                },
+                select: {
+                    practiceDate: true,
+                    wordsPracticed: true,
+                    goalMet: true,
+                },
+            }),
+            this.prisma.dailyReviewStat.findMany({
+                where: {
+                    userLoginId,
+                    reviewDate: { gte: start, lte: end },
+                },
+                select: {
+                    reviewDate: true,
+                    reviews: true,
+                    correctReviews: true,
+                    newWords: true,
+                },
+            }),
+            this.prisma.wordProgress.groupBy({
+                by: ['state'],
+                where: { userLoginId },
+                _count: { _all: true },
+            }),
+            this.prisma.wordProgress.count({
+                where: {
+                    userLoginId,
+                    state: FSRS_STATE_REVIEW,
+                    interval: { gte: MASTERED_INTERVAL_DAYS },
+                },
+            }),
+            this.prisma.dailyHabit.findUnique({ where: { userLoginId } }),
+            this.prisma.userLevel.findUnique({ where: { userLoginId } }),
+        ]);
 
         // Seed every bucket so empty days/months render as zeros (no gaps).
         const buckets = new Map<string, ReportBucketDto>();
