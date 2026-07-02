@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import configuration from './config/configuration';
+import { validateEnv } from './config/validate-env';
 import { PrismaModule } from './prisma/prisma.module';
 import { DailyHabitModule } from './daily-habit/daily-habit.module';
 import { WordProgressModule } from './word-progress/word-progress.module';
@@ -14,6 +15,7 @@ import { UserLevelModule } from './user-level/user-level.module';
         ConfigModule.forRoot({
             isGlobal: true,
             load: [configuration],
+            validate: validateEnv,
         }),
         PrismaModule,
         WordProgressModule,
