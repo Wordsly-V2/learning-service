@@ -7,6 +7,7 @@ import {
     Max,
     Min,
 } from 'class-validator';
+import { UnlockedAchievementDto } from '@/achievement/dto/achievement.dto';
 
 export const DAILY_GOAL_WORDS = 10;
 export const DAILY_GOAL_MIN = 5;
@@ -143,4 +144,10 @@ export class DailyHabitResponseDto {
 
     @ApiProperty({ example: 'Almost there — 2 more words to hit your goal.' })
     message: string;
+
+    @ApiPropertyOptional({
+        description: 'Achievements unlocked by this practice, if any',
+        type: [UnlockedAchievementDto],
+    })
+    unlockedAchievements?: UnlockedAchievementDto[];
 }

@@ -9,8 +9,12 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
+    ActivityCalendarQueryDto,
+    ActivityCalendarResponseDto,
     LearningReportQueryDto,
     LearningReportResponseDto,
+    ReviewForecastQueryDto,
+    ReviewForecastResponseDto,
 } from './dto/learning-report.dto';
 import { LearningReportService } from './learning-report.service';
 
@@ -48,6 +52,43 @@ export class LearningReportController {
         return this.learningReportService.getReport(
             userLoginId,
             period,
+            clientDate,
+        );
+    }
+
+    @Get('forecast')
+    @ApiOperation({
+        summary: 'Upcoming review workload forecast',
+        description: 'Per-day count of reviews due over the next 7 or 30 days.',
+    })
+    @ApiResponse({ status: 200, type: ReviewForecastResponseDto })
+    getForecast(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Query() query: ReviewForecastQueryDto,
+    ): Promise<ReviewForecastResponseDto> {
+        const days = query.days ?? 7;
+        const clientDate =
+            query.clientDate ?? new Date().toISOString().slice(0, 10);
+        return this.learningReportService.getReviewForecast(
+            userLoginId,
+            days,
+            clientDate,
+        );
+    }
+
+    @Get('activity-calendar')
+    @ApiOperation({
+        summary: 'Trailing 365-day practice activity for a heatmap',
+    })
+    @ApiResponse({ status: 200, type: ActivityCalendarResponseDto })
+    getActivityCalendar(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Query() query: ActivityCalendarQueryDto,
+    ): Promise<ActivityCalendarResponseDto> {
+        const clientDate =
+            query.clientDate ?? new Date().toISOString().slice(0, 10);
+        return this.learningReportService.getActivityCalendar(
+            userLoginId,
             clientDate,
         );
     }

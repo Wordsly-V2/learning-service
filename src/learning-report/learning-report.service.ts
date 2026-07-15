@@ -12,14 +12,18 @@ import {
     accuracyPercent,
     bucketKeyForDate,
     buildReportRange,
+    buildReviewForecast,
     computeAchievements,
     MASTERED_INTERVAL_DAYS,
     ReportPeriod,
 } from './learning-report.logic';
+import { addClientDays } from '@/daily-habit/daily-habit.logic';
 import { computeLevelProgress } from '@/user-level/user-level.logic';
 import {
+    ActivityCalendarResponseDto,
     LearningReportResponseDto,
     ReportBucketDto,
+    ReviewForecastResponseDto,
 } from './dto/learning-report.dto';
 
 /** FSRS State enum value for cards in the Review phase. */
@@ -46,8 +50,10 @@ export class LearningReportService {
             reviewStats,
             stateGroups,
             masteredWords,
+            leechCount,
             habit,
             userLevel,
+            unlockedRows,
         ] = await Promise.all([
             this.prisma.dailyHabitDay.findMany({
                 where: {
@@ -84,8 +90,15 @@ export class LearningReportService {
                     interval: { gte: MASTERED_INTERVAL_DAYS },
                 },
             }),
+            this.prisma.wordProgress.count({
+                where: { userLoginId, isLeech: true },
+            }),
             this.prisma.dailyHabit.findUnique({ where: { userLoginId } }),
             this.prisma.userLevel.findUnique({ where: { userLoginId } }),
+            this.prisma.userAchievement.findMany({
+                where: { userLoginId },
+                select: { key: true, unlockedAt: true },
+            }),
         ]);
 
         // Seed every bucket so empty days/months render as zeros (no gaps).
@@ -183,11 +196,17 @@ export class LearningReportService {
               }
             : { current: 0, longest: 0, goalStreak: 0, longestGoalStreak: 0 };
 
+        const unlockedAtByKey = new Map(
+            unlockedRows.map((row) => [row.key, row.unlockedAt]),
+        );
         const achievements = computeAchievements({
             longestStreak: habit?.longestStreak ?? 0,
             totalWordsPracticed: habit?.totalWordsPracticed ?? 0,
             totalPracticeDays: habit?.totalPracticeDays ?? 0,
-        });
+        }).map((a) => ({
+            ...a,
+            unlockedAt: unlockedAtByKey.get(a.key) ?? null,
+        }));
 
         return {
             period: range.period,
@@ -207,10 +226,65 @@ export class LearningReportService {
                 reviewWords,
                 masteredWords,
                 totalStarted,
+                leeches: leechCount,
             },
             streaks,
             level: computeLevelProgress(userLevel?.totalXp ?? 0),
             achievements,
+        };
+    }
+
+    /** Per-day count of upcoming reviews for the next `days` days. */
+    async getReviewForecast(
+        userLoginId: string,
+        days: number,
+        clientDate: string,
+    ): Promise<ReviewForecastResponseDto> {
+        const end = parseClientDate(addClientDays(clientDate, days));
+        const rows = await this.prisma.wordProgress.findMany({
+            where: {
+                userLoginId,
+                suspendedAt: null,
+                state: { not: 0 },
+                nextReviewAt: { lt: end },
+            },
+            select: { nextReviewAt: true },
+        });
+        return buildReviewForecast(
+            clientDate,
+            days,
+            rows.map((r) => r.nextReviewAt),
+        );
+    }
+
+    /** Trailing 365 days of practice activity for a calendar heatmap. */
+    async getActivityCalendar(
+        userLoginId: string,
+        clientDate: string,
+    ): Promise<ActivityCalendarResponseDto> {
+        const startStr = addClientDays(clientDate, -364);
+        const start = parseClientDate(startStr);
+        const end = parseClientDate(clientDate);
+        const rows = await this.prisma.dailyHabitDay.findMany({
+            where: {
+                userLoginId,
+                practiceDate: { gte: start, lte: end },
+            },
+            select: {
+                practiceDate: true,
+                wordsPracticed: true,
+                goalMet: true,
+            },
+            orderBy: { practiceDate: 'asc' },
+        });
+        return {
+            start: startStr,
+            end: clientDate,
+            days: rows.map((r) => ({
+                date: formatClientDate(r.practiceDate),
+                wordsPracticed: r.wordsPracticed,
+                goalMet: r.goalMet,
+            })),
         };
     }
 }

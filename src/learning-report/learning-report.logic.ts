@@ -106,6 +106,57 @@ export function accuracyPercent(correct: number, total: number): number | null {
     return Math.round((correct / total) * 100 * 10) / 10;
 }
 
+/**
+ * Bucket upcoming review dates into a per-day forecast. `nextReviewDates` are
+ * ISO instants; each is clamped to its client-local calendar date. Dates before
+ * `startDate` count as overdue. Every day in the window is seeded to zero.
+ */
+export function buildReviewForecast(
+    startDate: string,
+    days: number,
+    nextReviewDates: Date[],
+): {
+    days: number;
+    start: string;
+    overdue: number;
+    total: number;
+    buckets: { date: string; count: number }[];
+} {
+    const bucketDates: string[] = [];
+    for (let i = 0; i < days; i++) {
+        bucketDates.push(addClientDays(startDate, i));
+    }
+    const counts = new Map<string, number>(bucketDates.map((d) => [d, 0]));
+    const lastDate = bucketDates[bucketDates.length - 1];
+
+    let overdue = 0;
+    let total = 0;
+    for (const d of nextReviewDates) {
+        const date = formatClientDate(d);
+        if (date < startDate) {
+            overdue += 1;
+            total += 1;
+            continue;
+        }
+        if (date > lastDate) {
+            continue;
+        }
+        counts.set(date, (counts.get(date) ?? 0) + 1);
+        total += 1;
+    }
+
+    return {
+        days,
+        start: startDate,
+        overdue,
+        total,
+        buckets: bucketDates.map((date) => ({
+            date,
+            count: counts.get(date) ?? 0,
+        })),
+    };
+}
+
 export interface AchievementInput {
     longestStreak: number;
     totalWordsPracticed: number;

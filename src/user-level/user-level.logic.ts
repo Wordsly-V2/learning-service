@@ -55,6 +55,40 @@ export function xpForAnswer(a: {
     return xp;
 }
 
+// --- Streak XP multiplier -----------------------------------------------------
+
+/**
+ * Goal-streak tiers that scale per-answer XP. A longer daily streak multiplies
+ * the learning XP earned that day, rewarding consistency. Ordered by descending
+ * threshold so the first match wins.
+ */
+export const STREAK_MULTIPLIER_TIERS = [
+    { minGoalStreak: 30, multiplier: 1.5 },
+    { minGoalStreak: 7, multiplier: 1.25 },
+    { minGoalStreak: 3, multiplier: 1.1 },
+] as const;
+
+/** Multiplier applied to per-answer XP for the given goal streak (1 when none). */
+export function streakXpMultiplier(goalStreak: number): number {
+    for (const tier of STREAK_MULTIPLIER_TIERS) {
+        if (goalStreak >= tier.minGoalStreak) {
+            return tier.multiplier;
+        }
+    }
+    return 1;
+}
+
+/** Apply the streak multiplier to a base XP amount, rounded to an integer. */
+export function applyStreakMultiplier(
+    baseXp: number,
+    goalStreak: number,
+): number {
+    if (baseXp <= 0) {
+        return baseXp;
+    }
+    return Math.round(baseXp * streakXpMultiplier(goalStreak));
+}
+
 // --- Level curve --------------------------------------------------------------
 
 /** Steepness of the quadratic XP curve. */

@@ -30,11 +30,18 @@ model WordProgress {
   totalReviews   Int @default(0) @map("total_reviews")
   correctReviews Int @default(0) @map("correct_reviews")
 
+  // Leech handling: a card that has lapsed past the user's threshold is flagged
+  // (computed on write) so it can be listed/remediated; suspended cards are
+  // withheld from due-word selection until manually unsuspended or re-answered.
+  isLeech     Boolean   @default(false) @map("is_leech")
+  suspendedAt DateTime? @map("suspended_at") @db.Timestamptz
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   @@unique([wordId, userLoginId])
   @@index([userLoginId, nextReviewAt])
+  @@index([userLoginId, isLeech])
   @@index([wordId])
   @@map("word_progress")
 }
@@ -114,4 +121,64 @@ model DailyHabitDay {
   @@id([userLoginId, practiceDate])
   @@index([userLoginId, practiceDate(sort: Desc)])
   @@map("daily_habit_day")
+}
+
+// An achievement a user has unlocked (persisted, unlike the derived progress
+// grid in the learning report). Detected at write-time in daily-habit so the
+// unlock moment can be celebrated and rewarded exactly once.
+model UserAchievement {
+  userLoginId String   @map("user_login_id") @db.Uuid
+  key         String // e.g. "streak-7", "words-250", "days-30"
+  unlockedAt  DateTime @default(now()) @map("unlocked_at") @db.Timestamptz
+  xpAwarded   Int      @default(0) @map("xp_awarded")
+
+  @@id([userLoginId, key])
+  @@index([userLoginId, unlockedAt(sort: Desc)])
+  @@map("user_achievement")
+}
+
+// Per-user push notification opt-in and reminder preferences (one row per user).
+// timezone is IANA (e.g. Asia/Ho_Chi_Minh); reminderTime is "HH:mm" user-local.
+// lastReminderSentDate is a user-local @db.Date used to dedupe daily reminders.
+model NotificationPreference {
+  userLoginId           String    @id @map("user_login_id") @db.Uuid
+  streakReminderEnabled Boolean   @default(false) @map("streak_reminder_enabled")
+  reminderTime          String    @default("19:00") @map("reminder_time")
+  timezone              String    @default("UTC")
+  lastReminderSentDate  DateTime? @map("last_reminder_sent_date") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("notification_preference")
+}
+
+// A Web Push subscription (one row per browser/device endpoint).
+model PushSubscription {
+  id          String   @id @db.Uuid
+  userLoginId String   @map("user_login_id") @db.Uuid
+  endpoint    String   @unique
+  p256dh      String
+  auth        String
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userLoginId])
+  @@map("push_subscription")
+}
+
+// Per-user learning pacing + leech configuration (one row per user, lazily
+// created like UserLevel). Read by word-progress to cap daily new words/reviews
+// and to decide when a lapsing card becomes a leech.
+model UserLearningSettings {
+  userLoginId       String  @id @map("user_login_id") @db.Uuid
+  dailyNewWordLimit Int     @default(10) @map("daily_new_word_limit")
+  dailyReviewLimit  Int     @default(100) @map("daily_review_limit")
+  leechThreshold    Int     @default(8) @map("leech_threshold")
+  leechAutoSuspend  Boolean @default(false) @map("leech_auto_suspend")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("user_learning_settings")
 }

@@ -18,10 +18,13 @@ import {
 } from '@nestjs/swagger';
 import {
     BulkRecordAnswersDto,
+    BulkRecordAnswersResponseDto,
     BulkResetProgressDto,
     ByWordIdsDto,
     DueWordIdsResponseDto,
     GetDueWordIdsDto,
+    LeechesResponseDto,
+    LeechWordIdsDto,
     RecordAnswerDto,
     StatsByScopesDto,
     StatsByWordIdsDto,
@@ -73,12 +76,12 @@ export class WordProgressController {
     @ApiResponse({
         status: 200,
         description: 'Answers recorded successfully',
-        type: [WordProgressResponseDto],
+        type: BulkRecordAnswersResponseDto,
     })
     async recordAnswersBulkSync(
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: BulkRecordAnswersDto,
-    ): Promise<WordProgressResponseDto[]> {
+    ): Promise<BulkRecordAnswersResponseDto> {
         return this.wordProgressService.recordAnswersBulk(
             userLoginId,
             body.answers,
@@ -102,11 +105,39 @@ export class WordProgressController {
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
-        const wordIds = await this.wordProgressService.getDueWordIds(
-            userLoginId,
-            body,
-        );
-        return { wordIds };
+        return this.wordProgressService.getDueWordIds(userLoginId, body);
+    }
+
+    @Post('leeches')
+    @ApiOperation({
+        summary: 'Get leech cards within a scope',
+        description:
+            'Returns cards flagged as leeches (lapsed past the threshold), most-lapsed first.',
+    })
+    @ApiBody({ type: LeechWordIdsDto })
+    @ApiResponse({ status: 200, type: LeechesResponseDto })
+    async getLeeches(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Body() body: LeechWordIdsDto,
+    ): Promise<LeechesResponseDto> {
+        return this.wordProgressService.getLeeches(userLoginId, body.wordIds);
+    }
+
+    @Post('words/:wordId/unsuspend')
+    @ApiOperation({
+        summary: 'Unsuspend a card so it re-enters review selection',
+    })
+    @ApiParam({
+        name: 'wordId',
+        description: 'Word ID',
+        example: '01936b3e-7c8f-7890-abcd-ef1234567890',
+    })
+    async unsuspendWord(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Param('wordId', new ParseUUIDPipe()) wordId: string,
+    ): Promise<{ success: boolean }> {
+        await this.wordProgressService.unsuspendWord(userLoginId, wordId);
+        return { success: true };
     }
 
     @Post('stats/by-scopes')

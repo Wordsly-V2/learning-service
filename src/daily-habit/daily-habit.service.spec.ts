@@ -39,16 +39,20 @@ describe('DailyHabitService', () => {
                 upsert: jest.fn(),
                 findUnique: jest.fn(),
             },
-            $transaction: jest.fn(async (fn: (tx: typeof prisma) => unknown) =>
+            $transaction: jest.fn((fn: (tx: typeof prisma) => unknown) =>
                 fn(prisma),
             ),
         };
         const userLevelService = {
             awardXp: jest.fn().mockResolvedValue({ leveledUp: false }),
         };
+        const achievementService = {
+            detectAndUnlock: jest.fn().mockResolvedValue([]),
+        };
         service = new DailyHabitService(
             prisma as never,
             userLevelService as never,
+            achievementService as never,
         );
     });
 

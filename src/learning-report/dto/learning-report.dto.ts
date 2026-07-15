@@ -1,9 +1,42 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
 import { CLIENT_DATE_PATTERN } from '@/word-progress/dto/word-progress.dto';
 import type { ReportGranularity, ReportPeriod } from '../learning-report.logic';
 
 export const REPORT_PERIODS: ReportPeriod[] = ['week', 'month', 'year'];
+
+export class ReviewForecastQueryDto {
+    @ApiPropertyOptional({
+        description: 'Forecast horizon in days',
+        example: 7,
+    })
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @IsIn([7, 30])
+    days?: number = 7;
+
+    @ApiPropertyOptional({
+        description: 'Client local calendar date (YYYY-MM-DD)',
+        example: '2026-06-23',
+    })
+    @IsOptional()
+    @IsString()
+    @Matches(CLIENT_DATE_PATTERN)
+    clientDate?: string;
+}
+
+export class ActivityCalendarQueryDto {
+    @ApiPropertyOptional({
+        description: 'Client local calendar date (YYYY-MM-DD)',
+        example: '2026-06-23',
+    })
+    @IsOptional()
+    @IsString()
+    @Matches(CLIENT_DATE_PATTERN)
+    clientDate?: string;
+}
 
 export class LearningReportQueryDto {
     @ApiPropertyOptional({
@@ -123,6 +156,12 @@ export class ReportMasteryDto {
         example: 100,
     })
     totalStarted: number;
+
+    @ApiProperty({
+        description: 'Cards flagged as leeches (repeatedly lapsed)',
+        example: 3,
+    })
+    leeches: number;
 }
 
 export class ReportStreaksDto {
@@ -198,6 +237,63 @@ export class ReportAchievementDto {
 
     @ApiProperty({ example: 7 })
     target: number;
+
+    @ApiPropertyOptional({
+        description: 'When the achievement was unlocked (if persisted)',
+        example: '2026-06-20T09:15:44.000Z',
+        nullable: true,
+    })
+    unlockedAt?: Date | null;
+}
+
+export class ForecastBucketDto {
+    @ApiProperty({ example: '2026-06-24' })
+    date: string;
+
+    @ApiProperty({ description: 'Reviews scheduled that day', example: 12 })
+    count: number;
+}
+
+export class ReviewForecastResponseDto {
+    @ApiProperty({ example: 7 })
+    days: number;
+
+    @ApiProperty({ example: '2026-06-24' })
+    start: string;
+
+    @ApiProperty({ description: 'Reviews already overdue', example: 8 })
+    overdue: number;
+
+    @ApiProperty({
+        description: 'Total upcoming reviews in the window',
+        example: 54,
+    })
+    total: number;
+
+    @ApiProperty({ type: [ForecastBucketDto] })
+    buckets: ForecastBucketDto[];
+}
+
+export class ActivityDayDto {
+    @ApiProperty({ example: '2026-06-24' })
+    date: string;
+
+    @ApiProperty({ example: 15 })
+    wordsPracticed: number;
+
+    @ApiProperty({ example: true })
+    goalMet: boolean;
+}
+
+export class ActivityCalendarResponseDto {
+    @ApiProperty({ example: '2025-06-24' })
+    start: string;
+
+    @ApiProperty({ example: '2026-06-24' })
+    end: string;
+
+    @ApiProperty({ type: [ActivityDayDto] })
+    days: ActivityDayDto[];
 }
 
 export class LearningReportResponseDto {

@@ -9,6 +9,10 @@ import { DailyHabitModule } from './daily-habit/daily-habit.module';
 import { WordProgressModule } from './word-progress/word-progress.module';
 import { LearningReportModule } from './learning-report/learning-report.module';
 import { UserLevelModule } from './user-level/user-level.module';
+import { LearningSettingsModule } from './learning-settings/learning-settings.module';
+import { AchievementModule } from './achievement/achievement.module';
+import { NotificationModule } from './notification/notification.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
     imports: [
@@ -17,11 +21,15 @@ import { UserLevelModule } from './user-level/user-level.module';
             load: [configuration],
             validate: validateEnv,
         }),
+        ScheduleModule.forRoot(),
         PrismaModule,
         WordProgressModule,
         DailyHabitModule,
         LearningReportModule,
         UserLevelModule,
+        LearningSettingsModule,
+        AchievementModule,
+        NotificationModule,
     ],
     controllers: [AppController],
     providers: [AppService],

@@ -1,8 +1,10 @@
 import {
+    applyStreakMultiplier,
     computeLevelProgress,
     isMastered,
     levelFromXp,
     rankForLevel,
+    streakXpMultiplier,
     xpForAnswer,
     xpToReachLevel,
     XP_CORRECT,
@@ -11,6 +13,35 @@ import {
     XP_PER_REVIEW,
     XP_PERFECT,
 } from './user-level.logic';
+
+describe('streakXpMultiplier', () => {
+    it('is 1 below the first tier', () => {
+        expect(streakXpMultiplier(0)).toBe(1);
+        expect(streakXpMultiplier(2)).toBe(1);
+    });
+
+    it('applies tier boundaries', () => {
+        expect(streakXpMultiplier(3)).toBe(1.1);
+        expect(streakXpMultiplier(6)).toBe(1.1);
+        expect(streakXpMultiplier(7)).toBe(1.25);
+        expect(streakXpMultiplier(29)).toBe(1.25);
+        expect(streakXpMultiplier(30)).toBe(1.5);
+        expect(streakXpMultiplier(100)).toBe(1.5);
+    });
+});
+
+describe('applyStreakMultiplier', () => {
+    it('rounds the scaled XP', () => {
+        expect(applyStreakMultiplier(10, 7)).toBe(13); // 12.5 -> 13
+        expect(applyStreakMultiplier(10, 30)).toBe(15);
+    });
+
+    it('is a no-op at streak 0 or non-positive XP', () => {
+        expect(applyStreakMultiplier(10, 0)).toBe(10);
+        expect(applyStreakMultiplier(0, 30)).toBe(0);
+        expect(applyStreakMultiplier(-5, 30)).toBe(-5);
+    });
+});
 
 describe('xpToReachLevel', () => {
     it('matches the documented thresholds', () => {
