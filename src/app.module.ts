@@ -10,6 +10,7 @@ import { WordProgressModule } from './word-progress/word-progress.module';
 import { LearningReportModule } from './learning-report/learning-report.module';
 import { UserLevelModule } from './user-level/user-level.module';
 import { LearningSettingsModule } from './learning-settings/learning-settings.module';
+import { UserPreferencesModule } from './user-preferences/user-preferences.module';
 import { AchievementModule } from './achievement/achievement.module';
 import { NotificationModule } from './notification/notification.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -28,6 +29,7 @@ import { ScheduleModule } from '@nestjs/schedule';
         LearningReportModule,
         UserLevelModule,
         LearningSettingsModule,
+        UserPreferencesModule,
         AchievementModule,
         NotificationModule,
     ],

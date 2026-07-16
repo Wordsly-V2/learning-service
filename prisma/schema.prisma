@@ -182,3 +182,17 @@ model UserLearningSettings {
 
   @@map("user_learning_settings")
 }
+
+// Per-user app/UI preferences synced across devices (one row per user, lazily
+// created). Stored as an opaque JSON blob — the shape is owned by the frontend
+// (practice settings, due-words batch size, word-details auto-advance, theme).
+// PATCH shallow-merges into `preferences` so writes are last-write-wins per key.
+model UserPreferences {
+  userLoginId String @id @map("user_login_id") @db.Uuid
+  preferences Json   @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("user_preferences")
+}
