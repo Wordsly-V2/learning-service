@@ -137,6 +137,20 @@ export class GetDueWordIdsDto {
     limit?: number = 20;
 
     @ApiPropertyOptional({
+        description:
+            'Maximum number of NEW (never-studied) words to include, independent of the due/review cap. When omitted, new words fill whatever room the combined `limit` leaves after due words (legacy behaviour).',
+        example: 5,
+        minimum: 0,
+        maximum: 100,
+    })
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(0)
+    @Max(100)
+    newLimit?: number;
+
+    @ApiPropertyOptional({
         description: 'Include new words (not yet reviewed)',
         example: true,
         default: true,

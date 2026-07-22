@@ -353,7 +353,13 @@ export class WordProgressService {
         userLoginId: string,
         query: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
-        const { wordIds, limit = 20, includeNew = true, clientDate } = query;
+        const {
+            wordIds,
+            limit = 20,
+            newLimit,
+            includeNew = true,
+            clientDate,
+        } = query;
 
         // Resolve today's pacing budget from settings + what's been done today.
         const now = new Date();
@@ -405,7 +411,7 @@ export class WordProgressService {
         const dueIds = dueRows.map((r) => r.wordId);
 
         const newTake = includeNew
-            ? newWordTake(limit, dueIds.length, budget)
+            ? newWordTake(limit, dueIds.length, budget, newLimit)
             : 0;
         if (newTake <= 0) {
             return { wordIds: dueIds, pacing: budget };

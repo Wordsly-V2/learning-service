@@ -33,4 +33,15 @@ describe('reviewTake / newWordTake', () => {
         expect(newWordTake(9, 8, budget)).toBe(1); // room 1
         expect(newWordTake(8, 8, budget)).toBe(0); // no room
     });
+
+    it('uses an explicit newLimit independent of due count, still budget-capped', () => {
+        const roomy = { ...budget, newWordsRemainingToday: 10 };
+        // newLimit wins over `limit - dueCount`: 5 new words regardless of dues.
+        expect(newWordTake(20, 18, roomy, 5)).toBe(5);
+        expect(newWordTake(20, 0, roomy, 5)).toBe(5);
+        // Daily new-word budget is still the hard ceiling.
+        expect(newWordTake(20, 0, budget, 5)).toBe(3); // budget 3 < newLimit 5
+        // newLimit of 0 disables new words even with room and budget.
+        expect(newWordTake(20, 0, roomy, 0)).toBe(0);
+    });
 });

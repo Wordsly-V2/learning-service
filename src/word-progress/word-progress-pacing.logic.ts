@@ -50,12 +50,23 @@ export function reviewTake(
     return Math.max(0, Math.min(requestedLimit, budget.reviewsRemainingToday));
 }
 
-/** How many new words to fetch after due reviews are chosen. */
+/**
+ * How many new words to fetch.
+ *
+ * When `newLimit` is provided, new words get their own cap independent of how
+ * many due reviews were chosen (the "separate words-per-session for new words"
+ * setting). When omitted, new words fill whatever room the combined
+ * `requestedLimit` leaves after due words — the legacy behaviour.
+ *
+ * In both cases the daily new-word budget is the hard ceiling.
+ */
 export function newWordTake(
     requestedLimit: number,
     dueCount: number,
     budget: PacingBudget,
+    newLimit?: number,
 ): number {
-    const roomInRequest = requestedLimit - dueCount;
-    return Math.max(0, Math.min(roomInRequest, budget.newWordsRemainingToday));
+    const room =
+        newLimit === undefined ? requestedLimit - dueCount : newLimit;
+    return Math.max(0, Math.min(room, budget.newWordsRemainingToday));
 }
