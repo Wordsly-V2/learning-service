@@ -370,8 +370,11 @@ export class DailyHabitService {
         const sameDay = datesEqual(row.practiceDate, today);
         const wordsToday = sameDay ? row.wordsToday : 0;
         const goalMetToday = isGoalMet(wordsToday, goal);
-        const { streak: displayStreak, shielded: streakShielded } =
-            resolveDisplayStreak({
+        const {
+            streak: displayStreak,
+            shielded: streakShielded,
+            freezesRemaining,
+        } = resolveDisplayStreak({
                 streak: row.streak,
                 lastPracticeDate: row.lastPracticeDate,
                 freezes: row.streakFreezes,
@@ -415,7 +418,7 @@ export class DailyHabitService {
             recentDays,
             streakAtRisk,
             nextMilestone: nextStreakMilestone(displayStreak),
-            streakFreezes: row.streakFreezes,
+            streakFreezes: freezesRemaining,
             streakShielded,
             message: habitMotivation({
                 goalMetToday,

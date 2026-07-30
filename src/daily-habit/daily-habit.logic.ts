@@ -106,34 +106,43 @@ function dayDelta(a: Date, b: Date): number {
 /**
  * Effective practice streak for display. Banked freezes bridge missed days
  * (one freeze per missed day) without mutating state — actual consumption
- * happens on the next recorded practice. With zero freezes this reduces to
- * effectivePracticeStreak: any missed day lapses the streak to 0.
+ * happens on the next recorded practice, so `freezesRemaining` reports the
+ * balance the pending consumption will leave behind. With zero freezes this
+ * reduces to effectivePracticeStreak: any missed day lapses the streak to 0.
  */
 export function resolveDisplayStreak(params: {
     streak: number;
     lastPracticeDate: Date | null;
     freezes: number;
     clientDate: string;
-}): { streak: number; shielded: boolean } {
+}): { streak: number; shielded: boolean; freezesRemaining: number } {
     const { streak, lastPracticeDate, freezes, clientDate } = params;
     if (!lastPracticeDate || streak <= 0) {
-        return { streak: 0, shielded: false };
+        return { streak: 0, shielded: false, freezesRemaining: freezes };
     }
     const delta = dayDelta(lastPracticeDate, parseClientDate(clientDate));
     // delta 0 = practiced today, 1 = practiced yesterday — streak is live.
     if (delta <= 1) {
-        return { streak, shielded: false };
+        return { streak, shielded: false, freezesRemaining: freezes };
     }
     const missed = delta - 1;
     if (missed > 0 && missed <= freezes) {
-        return { streak, shielded: true };
+        // Each missed day is already spoken for by a banked freeze.
+        return {
+            streak,
+            shielded: true,
+            freezesRemaining: freezes - missed,
+        };
     }
-    return { streak: 0, shielded: false };
+    // The gap outran the bank: every freeze was spent trying to cover it and
+    // the streak still lapsed.
+    return { streak: 0, shielded: false, freezesRemaining: 0 };
 }
 
 /**
  * Practice streak after today's session, letting freezes bridge a gap of
- * missed days. Returns how many freezes were consumed to keep the streak.
+ * missed days. Returns how many freezes were consumed — the whole bank is
+ * spent when the gap outruns it, even though the streak still lapses.
  */
 export function nextPracticeStreakWithFreezes(params: {
     currentStreak: number;
@@ -156,12 +165,13 @@ export function nextPracticeStreakWithFreezes(params: {
     if (missed <= freezes) {
         return { streak: currentStreak + 1, freezesConsumed: missed };
     }
-    return { streak: 1, freezesConsumed: 0 };
+    return { streak: 1, freezesConsumed: freezes };
 }
 
 /**
- * Freeze balance after a session: spend what bridged the gap, then award one
- * for crossing a goal-streak earn threshold, capped at MAX_STREAK_FREEZES.
+ * Freeze balance after a session: spend what was consumed against the gap (the
+ * whole bank when the streak lapsed anyway), then award one for crossing a
+ * goal-streak earn threshold, capped at MAX_STREAK_FREEZES.
  */
 export function freezesAfterPractice(params: {
     currentFreezes: number;

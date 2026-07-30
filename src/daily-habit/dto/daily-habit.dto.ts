@@ -130,7 +130,7 @@ export class DailyHabitResponseDto {
 
     @ApiProperty({
         description:
-            'Banked streak freezes that auto-protect the streak on a missed day',
+            'Banked streak freezes that auto-protect the streak on a missed day. Freezes already bridging missed days are deducted here, before the next session writes the consumption.',
         example: 1,
     })
     streakFreezes: number;

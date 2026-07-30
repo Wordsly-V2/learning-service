@@ -145,6 +145,7 @@ describe('daily-habit.logic', () => {
     describe('streak freezes', () => {
         const twoDaysAgo = '2026-06-03';
         const threeDaysAgo = '2026-06-02';
+        const fourDaysAgo = '2026-06-01';
 
         it('shields the streak when one day is missed and a freeze is banked', () => {
             expect(
@@ -154,10 +155,32 @@ describe('daily-habit.logic', () => {
                     freezes: 1,
                     clientDate: today,
                 }),
-            ).toEqual({ streak: 9, shielded: true });
+            ).toEqual({ streak: 9, shielded: true, freezesRemaining: 0 });
         });
 
-        it('breaks the streak when missed days exceed banked freezes', () => {
+        it('deducts the bridging freeze from the displayed balance', () => {
+            expect(
+                resolveDisplayStreak({
+                    streak: 9,
+                    lastPracticeDate: parseClientDate(twoDaysAgo),
+                    freezes: 2,
+                    clientDate: today,
+                }),
+            ).toEqual({ streak: 9, shielded: true, freezesRemaining: 1 });
+        });
+
+        it('deducts one freeze per missed day', () => {
+            expect(
+                resolveDisplayStreak({
+                    streak: 9,
+                    lastPracticeDate: parseClientDate(threeDaysAgo),
+                    freezes: 2,
+                    clientDate: today,
+                }),
+            ).toEqual({ streak: 9, shielded: true, freezesRemaining: 0 });
+        });
+
+        it('breaks the streak and burns the bank when missed days exceed banked freezes', () => {
             expect(
                 resolveDisplayStreak({
                     streak: 9,
@@ -165,7 +188,19 @@ describe('daily-habit.logic', () => {
                     freezes: 1,
                     clientDate: today,
                 }),
-            ).toEqual({ streak: 0, shielded: false });
+            ).toEqual({ streak: 0, shielded: false, freezesRemaining: 0 });
+        });
+
+        it('spends both freezes on a 3-day gap and still lapses', () => {
+            // 2 banked, 3 missed: the bank empties without saving the streak.
+            expect(
+                resolveDisplayStreak({
+                    streak: 9,
+                    lastPracticeDate: parseClientDate(fourDaysAgo),
+                    freezes: 2,
+                    clientDate: today,
+                }),
+            ).toEqual({ streak: 0, shielded: false, freezesRemaining: 0 });
         });
 
         it('treats yesterday as live without a shield', () => {
@@ -176,7 +211,7 @@ describe('daily-habit.logic', () => {
                     freezes: 2,
                     clientDate: today,
                 }),
-            ).toEqual({ streak: 9, shielded: false });
+            ).toEqual({ streak: 9, shielded: false, freezesRemaining: 2 });
         });
 
         it('consumes a freeze to bridge a missed day on practice', () => {
@@ -190,15 +225,27 @@ describe('daily-habit.logic', () => {
             ).toEqual({ streak: 10, freezesConsumed: 1 });
         });
 
-        it('resets when the gap is too wide for freezes', () => {
+        it('resets and spends the whole bank when the gap is too wide', () => {
             expect(
                 nextPracticeStreakWithFreezes({
                     currentStreak: 9,
-                    lastPracticeDate: parseClientDate(threeDaysAgo),
-                    freezes: 1,
+                    lastPracticeDate: parseClientDate(fourDaysAgo),
+                    freezes: 2,
                     clientDate: today,
                 }),
-            ).toEqual({ streak: 1, freezesConsumed: 0 });
+            ).toEqual({ streak: 1, freezesConsumed: 2 });
+        });
+
+        it('zeroes the balance after a lapse consumed every freeze', () => {
+            expect(
+                freezesAfterPractice({
+                    currentFreezes: 2,
+                    freezesConsumed: 2,
+                    prevGoalStreak: 4,
+                    newGoalStreak: 1,
+                    goalMetToday: false,
+                }),
+            ).toBe(0);
         });
 
         it('continues from yesterday without spending a freeze', () => {
