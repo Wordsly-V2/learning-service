@@ -3,6 +3,7 @@ import {
     bucketKeyForDate,
     buildReportRange,
     computeAchievements,
+    reviewedWordCount,
 } from './learning-report.logic';
 
 describe('buildReportRange', () => {
@@ -53,6 +54,16 @@ describe('accuracyPercent', () => {
     it('rounds to one decimal place', () => {
         expect(accuracyPercent(5, 6)).toBe(83.3);
         expect(accuracyPercent(3, 4)).toBe(75);
+    });
+});
+
+describe('reviewedWordCount', () => {
+    it('subtracts new words from the words practiced', () => {
+        expect(reviewedWordCount(12, 5)).toBe(7);
+    });
+
+    it('clamps at zero when the aggregates disagree', () => {
+        expect(reviewedWordCount(3, 5)).toBe(0);
     });
 });
 

@@ -79,8 +79,17 @@ export class ReportBucketDto {
     })
     start: string;
 
-    @ApiProperty({ example: 12 })
+    @ApiProperty({
+        description: 'Distinct words practiced (new + reviewed)',
+        example: 12,
+    })
     wordsPracticed: number;
+
+    @ApiProperty({
+        description: 'Words practiced that had been seen before this bucket',
+        example: 7,
+    })
+    reviewedWords: number;
 
     @ApiProperty({ example: 18 })
     reviews: number;
@@ -113,8 +122,17 @@ export class ReportBucketDto {
 }
 
 export class ReportSummaryDto {
-    @ApiProperty({ example: 84 })
+    @ApiProperty({
+        description: 'Words practiced across the window (new + reviewed)',
+        example: 84,
+    })
     wordsLearned: number;
+
+    @ApiProperty({
+        description: 'Practiced words that were already known before',
+        example: 64,
+    })
+    reviewedWords: number;
 
     @ApiProperty({ example: 120 })
     totalReviews: number;

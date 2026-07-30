@@ -16,6 +16,7 @@ import {
     computeAchievements,
     MASTERED_INTERVAL_DAYS,
     ReportPeriod,
+    reviewedWordCount,
 } from './learning-report.logic';
 import { addClientDays } from '@/daily-habit/daily-habit.logic';
 import { computeLevelProgress } from '@/user-level/user-level.logic';
@@ -108,6 +109,7 @@ export class LearningReportService {
                 key: def.key,
                 start: def.start,
                 wordsPracticed: 0,
+                reviewedWords: 0,
                 reviews: 0,
                 correctReviews: 0,
                 accuracy: null,
@@ -165,6 +167,10 @@ export class LearningReportService {
                 bucket.correctReviews,
                 bucket.reviews,
             );
+            bucket.reviewedWords = reviewedWordCount(
+                bucket.wordsPracticed,
+                bucket.newWords,
+            );
             return bucket;
         });
 
@@ -215,6 +221,11 @@ export class LearningReportService {
             buckets: bucketList,
             summary: {
                 wordsLearned,
+                // Summed per bucket so the cards match the stacked chart.
+                reviewedWords: bucketList.reduce(
+                    (sum, bucket) => sum + bucket.reviewedWords,
+                    0,
+                ),
                 totalReviews,
                 avgAccuracy: accuracyPercent(totalCorrect, totalReviews) ?? 0,
                 activeDays,

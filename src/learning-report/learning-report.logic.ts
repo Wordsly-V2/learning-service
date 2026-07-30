@@ -107,6 +107,19 @@ export function accuracyPercent(correct: number, total: number): number | null {
 }
 
 /**
+ * Split a bucket's practiced-word count into the part that was seen for the
+ * first time (`newWords`) and the part that was a repeat review. The two
+ * counters come from different aggregates (`DailyHabitDay` vs
+ * `DailyReviewStat`), so clamp at zero rather than trusting the subtraction.
+ */
+export function reviewedWordCount(
+    wordsPracticed: number,
+    newWords: number,
+): number {
+    return Math.max(0, wordsPracticed - newWords);
+}
+
+/**
  * Bucket upcoming review dates into a per-day forecast. `nextReviewDates` are
  * ISO instants; each is clamped to its client-local calendar date. Dates before
  * `startDate` count as overdue. Every day in the window is seeded to zero.
