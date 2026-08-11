@@ -38,6 +38,7 @@ import {
     newWordTake,
     reviewTake,
 } from './word-progress-pacing.logic';
+import { nextCorrectStreak, resolveLeechState } from './leech.logic';
 
 type ProgressStatsRow = Pick<
     WordProgress,
@@ -112,14 +113,27 @@ export class WordProgressService {
             learningSteps,
         } = calculateNextReview(quality, toSchedulerInput(existing, now), now);
 
-        const isLeech = lapses >= leechConfig.threshold;
+        const correctStreak = nextCorrectStreak(
+            existing?.correctStreak ?? 0,
+            isCorrect,
+        );
+        const leech = resolveLeechState({
+            wasLeech: existing?.isLeech ?? false,
+            lapsesAtRescue: existing?.lapsesAtRescue ?? 0,
+            rescuedCount: existing?.rescuedCount ?? 0,
+            lapses,
+            state,
+            correctStreak,
+            threshold: leechConfig.threshold,
+        });
+
         // A correct answer keeps the card in rotation (clears any suspension);
         // an incorrect answer on a leech auto-suspends it when enabled. Otherwise
         // the previous suspension state is preserved.
         let suspendedAt: Date | null = existing?.suspendedAt ?? null;
         if (isCorrect) {
             suspendedAt = null;
-        } else if (leechConfig.autoSuspend && isLeech) {
+        } else if (leechConfig.autoSuspend && leech.isLeech) {
             suspendedAt = suspendedAt ?? now;
         }
 
@@ -136,11 +150,14 @@ export class WordProgressService {
                 state,
                 lapses,
                 learningSteps,
+                correctStreak,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: 1,
                 correctReviews: isCorrect ? 1 : 0,
-                isLeech,
+                isLeech: leech.isLeech,
+                lapsesAtRescue: leech.lapsesAtRescue,
+                rescuedCount: leech.rescuedCount,
                 suspendedAt,
             },
             update: {
@@ -151,13 +168,16 @@ export class WordProgressService {
                 state,
                 lapses,
                 learningSteps,
+                correctStreak,
                 lastReviewedAt: now,
                 nextReviewAt,
                 totalReviews: { increment: 1 },
                 ...(isCorrect && {
                     correctReviews: { increment: 1 },
                 }),
-                isLeech,
+                isLeech: leech.isLeech,
+                lapsesAtRescue: leech.lapsesAtRescue,
+                rescuedCount: leech.rescuedCount,
                 suspendedAt,
             },
         });

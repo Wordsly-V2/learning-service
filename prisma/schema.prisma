@@ -15,8 +15,12 @@ model WordProgress {
 
   easeFactor  Float @default(2.5) // FSRS difficulty
   interval    Int   @default(0) // scheduled days until next review
-  repetitions Int   @default(0) // consecutive successful reps (FSRS reps)
+  repetitions Int   @default(0) // total FSRS reps — increments on every review, including failures
   stability   Float @default(0) // FSRS memory stability; 0 = derive from interval on read (legacy SM-2 row)
+
+  // Consecutive correct answers, reset by any wrong answer. Tracked separately
+  // because `repetitions` (ts-fsrs `card.reps`) counts failures too.
+  correctStreak Int @default(0) @map("correct_streak")
 
   // Full FSRS card state persisted so the scheduler reconstructs the card
   // losslessly instead of inferring it (lapse history + learning step survive).
@@ -30,11 +34,18 @@ model WordProgress {
   totalReviews   Int @default(0) @map("total_reviews")
   correctReviews Int @default(0) @map("correct_reviews")
 
-  // Leech handling: a card that has lapsed past the user's threshold is flagged
-  // (computed on write) so it can be listed/remediated; suspended cards are
-  // withheld from due-word selection until manually unsuspended or re-answered.
+  // Leech handling: a card that has lapsed past the user's threshold *since its
+  // last rescue* is flagged (computed on write) so it can be listed/remediated;
+  // suspended cards are withheld from due-word selection until manually
+  // unsuspended or re-answered. See src/word-progress/leech.logic.ts.
   isLeech     Boolean   @default(false) @map("is_leech")
   suspendedAt DateTime? @map("suspended_at") @db.Timestamptz
+
+  // Rescue baseline: lifetime `lapses` at the moment the card was last rescued,
+  // so the leech rule measures lapses since then rather than forever. 0 = never
+  // rescued, which makes the rule identical to the original lifetime one.
+  lapsesAtRescue Int @default(0) @map("lapses_at_rescue")
+  rescuedCount   Int @default(0) @map("rescued_count")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
