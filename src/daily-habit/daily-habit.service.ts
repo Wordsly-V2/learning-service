@@ -1,11 +1,13 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { Injectable } from '@nestjs/common';
-import { DailyHabit, DailyHabitDay } from '@prisma/client';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { DailyHabit, DailyHabitDay, Prisma } from '@prisma/client';
 import {
     ACTIVITY_HISTORY_DAYS,
+    BatchRecordDailyPracticeDto,
     DAILY_GOAL_WORDS,
     DailyHabitDayDto,
     DailyHabitResponseDto,
+    MAX_BACKDATED_HABIT_DAYS,
     RecordDailyPracticeDto,
     UpdateDailyGoalDto,
 } from './dto/daily-habit.dto';
@@ -16,34 +18,47 @@ import {
     yesterdayClientDate,
 } from './daily-habit-date.util';
 import {
+    addClientDays,
     effectiveGoalStreak,
     freezesAfterPractice,
     habitMotivation,
+    HabitDayPoint,
     isGoalMet,
     isStreakAtRisk,
-    isStreakMilestone,
     lastNDays,
+    mergePracticeDays,
     nextGoalStreak,
-    nextPracticeStreakWithFreezes,
     nextStreakMilestone,
+    recomputeHabitFromDays,
     resolveDisplayStreak,
 } from './daily-habit.logic';
 import { UserLevelService } from '@/user-level/user-level.service';
 import {
     XP_DAILY_GOAL_MET,
     XP_FIRST_PRACTICE_OF_DAY,
-    XP_STREAK_MILESTONE,
 } from '@/user-level/user-level.logic';
 import { AchievementService } from '@/achievement/achievement.service';
+import { UnlockedAchievementDto } from '@/achievement/dto/achievement.dto';
+import {
+    SYNC_ENDPOINT_HABIT_BATCH,
+    SyncRequestService,
+} from '@/sync/sync-request.service';
 
 type DailyHabitRow = DailyHabit & { days?: DailyHabitDay[] };
 
+/** DailyHabitGrant.kind values — one-shot per-day consistency XP. */
+const GRANT_FIRST_PRACTICE = 'first-practice';
+const GRANT_GOAL_MET = 'goal-met';
+
 @Injectable()
 export class DailyHabitService {
+    private readonly logger = new Logger(DailyHabitService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly userLevelService: UserLevelService,
         private readonly achievementService: AchievementService,
+        private readonly syncRequests: SyncRequestService,
     ) {}
 
     async getDailyHabit(
@@ -57,54 +72,256 @@ export class DailyHabitService {
         return this.toResponse(row, clientDate, recentDays);
     }
 
+    /**
+     * Record one session. Delegates to the batch path so the online and offline
+     * flows can never drift apart.
+     */
     async recordPractice(
         userLoginId: string,
         body: RecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
-        const { wordCount, clientDate } = body;
-        const today = parseClientDate(clientDate);
-        const yesterday = parseClientDate(yesterdayClientDate(clientDate));
+        return this.recordPracticeBatch(userLoginId, {
+            days: [
+                { clientDate: body.clientDate, wordCount: body.wordCount },
+            ],
+            clientDate: body.clientDate,
+        });
+    }
+
+    /**
+     * Record practice for one or more calendar days at once.
+     *
+     * An offline client can hold several days of sessions, so days arrive late and
+     * out of order. Two things make that safe:
+     *
+     * - `practiceDate` and `wordsToday` always describe the client's TODAY, read
+     *   back from the per-day ledger. Previously a backdated call overwrote both
+     *   with the older date and destroyed today's count.
+     * - Streaks are recomputed from the whole `DailyHabitDay` history rather than
+     *   advanced from a single cursor, so a backdated day that fills a gap joins
+     *   two runs instead of being silently absorbed. The recomputed values are
+     *   floored against the stored ones, so a recompute can never take a streak
+     *   away (notably one a freeze had bridged).
+     */
+    async recordPracticeBatch(
+        userLoginId: string,
+        body: BatchRecordDailyPracticeDto,
+    ): Promise<DailyHabitResponseDto> {
+        const clientToday = body.clientDate;
+        const today = parseClientDate(clientToday);
+
+        const merged = mergePracticeDays(body.days);
+        if (merged.some((day) => day.clientDate > clientToday)) {
+            throw new BadRequestException(
+                'Practice day cannot be in the future',
+            );
+        }
+
+        const floor = addClientDays(clientToday, -MAX_BACKDATED_HABIT_DAYS);
+        const usable = merged.filter((day) => day.clientDate >= floor);
+        if (usable.length === 0) {
+            const recentDays = await this.loadRecentDays(
+                userLoginId,
+                clientToday,
+            );
+            const row = await this.prisma.dailyHabit.findUnique({
+                where: { userLoginId },
+            });
+            return this.toResponse(row, clientToday, recentDays);
+        }
+        if (usable.length < merged.length) {
+            this.logger.warn('dropped ancient practice days', {
+                userLoginId,
+                dropped: merged.length - usable.length,
+            });
+        }
+
+        const totalWords = usable.reduce((sum, day) => sum + day.wordCount, 0);
 
         const { row: updated, unlockedAchievements } =
-            await this.prisma.$transaction(async (tx) => {
-                const existing = await tx.dailyHabit.findUnique({
-                    where: { userLoginId },
-                });
-                const dailyGoal = existing?.dailyGoal ?? DAILY_GOAL_WORDS;
+            await this.syncRequests.runOnce<{
+                row: DailyHabit;
+                unlockedAchievements: UnlockedAchievementDto[];
+            }>(
+                userLoginId,
+                body.clientRequestId,
+                SYNC_ENDPOINT_HABIT_BATCH,
+                async (tx) => {
+                    // DailyHabitDay has an FK to DailyHabit, so the parent row has
+                    // to exist before any day row.
+                    const existing = await tx.dailyHabit.upsert({
+                        where: { userLoginId },
+                        create: {
+                            userLoginId,
+                            dailyGoal: DAILY_GOAL_WORDS,
+                            practiceDate: today,
+                        },
+                        update: {},
+                    });
+                    const dailyGoal = existing.dailyGoal;
 
-                if (!existing) {
-                    const goalMetToday = isGoalMet(wordCount, dailyGoal);
-                    const row = await tx.dailyHabit.create({
-                        data: {
+                    // Which of these dates are brand new? Drives totalPracticeDays,
+                    // which stays increment-only.
+                    const priorDays = await tx.dailyHabitDay.findMany({
+                        where: {
                             userLoginId,
+                            practiceDate: {
+                                in: usable.map((day) =>
+                                    parseClientDate(day.clientDate),
+                                ),
+                            },
+                        },
+                        select: { practiceDate: true },
+                    });
+                    const priorDates = new Set(
+                        priorDays.map((row) =>
+                            formatClientDate(row.practiceDate),
+                        ),
+                    );
+                    const newDayCount = usable.filter(
+                        (day) => !priorDates.has(day.clientDate),
+                    ).length;
+
+                    for (const day of usable) {
+                        const practiceDate = parseClientDate(day.clientDate);
+                        const dayRow = await tx.dailyHabitDay.upsert({
+                            where: {
+                                userLoginId_practiceDate: {
+                                    userLoginId,
+                                    practiceDate,
+                                },
+                            },
+                            create: {
+                                userLoginId,
+                                practiceDate,
+                                wordsPracticed: day.wordCount,
+                                goalMet: isGoalMet(day.wordCount, dailyGoal),
+                            },
+                            update: {
+                                wordsPracticed: { increment: day.wordCount },
+                            },
+                        });
+
+                        const goalMet = isGoalMet(
+                            dayRow.wordsPracticed,
                             dailyGoal,
-                            wordsToday: wordCount,
-                            streak: 1,
-                            longestStreak: 1,
-                            goalStreak: goalMetToday ? 1 : 0,
-                            longestGoalStreak: goalMetToday ? 1 : 0,
-                            practiceDate: today,
-                            lastPracticeDate: today,
-                            lastGoalMetDate: goalMetToday ? today : null,
-                            totalWordsPracticed: wordCount,
-                            totalPracticeDays: 1,
+                        );
+                        if (dayRow.goalMet !== goalMet) {
+                            await tx.dailyHabitDay.update({
+                                where: {
+                                    userLoginId_practiceDate: {
+                                        userLoginId,
+                                        practiceDate,
+                                    },
+                                },
+                                data: { goalMet },
+                            });
+                        }
+                    }
+
+                    const allDays = await tx.dailyHabitDay.findMany({
+                        where: { userLoginId },
+                        select: {
+                            practiceDate: true,
+                            wordsPracticed: true,
+                            goalMet: true,
                         },
+                        orderBy: { practiceDate: 'asc' },
                     });
-                    await tx.dailyHabitDay.create({
-                        data: {
-                            userLoginId,
-                            practiceDate: today,
-                            wordsPracticed: wordCount,
-                            goalMet: goalMetToday,
-                        },
+                    const recomputed = recomputeHabitFromDays(
+                        allDays.map((row) => ({
+                            date: formatClientDate(row.practiceDate),
+                            words: row.wordsPracticed,
+                            goalMet: row.goalMet,
+                        })),
+                        clientToday,
+                    );
+
+                    // Monotonic floors. `longest*` never decreasing is the invariant
+                    // that keeps out-of-order ingestion from wrongly skipping an
+                    // achievement: totals only ever rise, so a milestone crossed by a
+                    // late batch is still detected.
+                    const shielded = resolveDisplayStreak({
+                        streak: existing.streak,
+                        lastPracticeDate: existing.lastPracticeDate,
+                        freezes: existing.streakFreezes,
+                        clientDate: clientToday,
                     });
-                    // First practice ever = first of the day; goal XP if the goal was met.
-                    await this.userLevelService.awardXp(
+                    const streak = Math.max(
+                        recomputed.streak,
+                        shielded.streak,
+                    );
+                    const longestStreak = Math.max(
+                        existing.longestStreak,
+                        recomputed.longestStreak,
+                        streak,
+                    );
+                    const goalStreak = Math.max(
+                        recomputed.goalStreak,
+                        effectiveGoalStreak(
+                            existing.goalStreak,
+                            existing.lastGoalMetDate,
+                            clientToday,
+                        ),
+                    );
+                    const longestGoalStreak = Math.max(
+                        existing.longestGoalStreak,
+                        recomputed.longestGoalStreak,
+                        goalStreak,
+                    );
+
+                    await this.grantDailyConsistencyXp(
                         tx,
                         userLoginId,
-                        XP_FIRST_PRACTICE_OF_DAY +
-                            (goalMetToday ? XP_DAILY_GOAL_MET : 0),
+                        usable.map((day) => day.clientDate),
+                        dailyGoal,
+                        allDays.map((row) => ({
+                            date: formatClientDate(row.practiceDate),
+                            words: row.wordsPracticed,
+                            goalMet: row.goalMet,
+                        })),
                     );
+
+                    const row = await tx.dailyHabit.update({
+                        where: { userLoginId },
+                        data: {
+                            // From the ledger, so a backdated day can no longer
+                            // overwrite today's count.
+                            wordsToday: recomputed.wordsToday,
+                            // ALWAYS the client's today.
+                            practiceDate: today,
+                            streak,
+                            longestStreak,
+                            goalStreak,
+                            longestGoalStreak,
+                            lastPracticeDate: recomputed.lastPracticeDate
+                                ? parseClientDate(recomputed.lastPracticeDate)
+                                : null,
+                            lastGoalMetDate: recomputed.lastGoalMetDate
+                                ? parseClientDate(recomputed.lastGoalMetDate)
+                                : null,
+                            streakFreezes: freezesAfterPractice({
+                                currentFreezes: existing.streakFreezes,
+                                // Freezes are only ever earned on the recompute
+                                // path; which historical gap a freeze bridged is
+                                // not reconstructible.
+                                freezesConsumed: 0,
+                                prevGoalStreak: existing.goalStreak,
+                                newGoalStreak: goalStreak,
+                                goalMetToday: isGoalMet(
+                                    recomputed.wordsToday,
+                                    dailyGoal,
+                                ),
+                            }),
+                            totalWordsPracticed: { increment: totalWords },
+                            ...(newDayCount > 0 && {
+                                totalPracticeDays: { increment: newDayCount },
+                            }),
+                        },
+                    });
+
+                    // After the update so a freeze reward is capped against the
+                    // just-written streakFreezes.
                     const unlocked =
                         await this.achievementService.detectAndUnlock(
                             tx,
@@ -116,131 +333,99 @@ export class DailyHabitService {
                             },
                         );
                     return { row, unlockedAchievements: unlocked };
-                }
+                },
+            );
 
-                const sameDay = datesEqual(existing.practiceDate, today);
-                const wordsToday = sameDay
-                    ? existing.wordsToday + wordCount
-                    : wordCount;
-                const isNewCalendarDay = !sameDay;
-
-                const streakResult = nextPracticeStreakWithFreezes({
-                    currentStreak: existing.streak,
-                    lastPracticeDate: existing.lastPracticeDate,
-                    freezes: existing.streakFreezes,
-                    clientDate,
-                });
-                const streak = streakResult.streak;
-                const longestStreak = Math.max(existing.longestStreak, streak);
-
-                const dayRecord = await tx.dailyHabitDay.upsert({
-                    where: {
-                        userLoginId_practiceDate: {
-                            userLoginId,
-                            practiceDate: today,
-                        },
-                    },
-                    create: {
-                        userLoginId,
-                        practiceDate: today,
-                        wordsPracticed: wordCount,
-                        goalMet: isGoalMet(wordCount, dailyGoal),
-                    },
-                    update: {
-                        wordsPracticed: { increment: wordCount },
-                    },
-                });
-
-                const goalMetToday = isGoalMet(wordsToday, dailyGoal);
-                if (dayRecord.goalMet !== goalMetToday) {
-                    await tx.dailyHabitDay.update({
-                        where: {
-                            userLoginId_practiceDate: {
-                                userLoginId,
-                                practiceDate: today,
-                            },
-                        },
-                        data: { goalMet: goalMetToday },
-                    });
-                }
-
-                const goalUpdate = nextGoalStreak(
-                    existing.goalStreak,
-                    existing.lastGoalMetDate,
-                    today,
-                    yesterday,
-                    goalMetToday,
-                );
-                const longestGoalStreak = Math.max(
-                    existing.longestGoalStreak,
-                    goalUpdate.goalStreak,
-                );
-
-                const streakFreezes = freezesAfterPractice({
-                    currentFreezes: existing.streakFreezes,
-                    freezesConsumed: streakResult.freezesConsumed,
-                    prevGoalStreak: existing.goalStreak,
-                    newGoalStreak: goalUpdate.goalStreak,
-                    goalMetToday,
-                });
-
-                // Consistency XP, each granted once on its crossing:
-                // first practice of a new day, the goal first met today, and the streak
-                // landing on a milestone (streak only grows on a genuinely new day).
-                const goalNewlyMetToday =
-                    goalMetToday &&
-                    !(
-                        existing.lastGoalMetDate &&
-                        datesEqual(existing.lastGoalMetDate, today)
-                    );
-                const streakMilestoneReached =
-                    streak > existing.streak && isStreakMilestone(streak);
-                const habitXp =
-                    (isNewCalendarDay ? XP_FIRST_PRACTICE_OF_DAY : 0) +
-                    (goalNewlyMetToday ? XP_DAILY_GOAL_MET : 0) +
-                    (streakMilestoneReached ? XP_STREAK_MILESTONE : 0);
-                await this.userLevelService.awardXp(tx, userLoginId, habitXp);
-
-                const row = await tx.dailyHabit.update({
-                    where: { userLoginId },
-                    data: {
-                        wordsToday,
-                        streak,
-                        longestStreak,
-                        goalStreak: goalUpdate.goalStreak,
-                        longestGoalStreak,
-                        practiceDate: today,
-                        lastPracticeDate: today,
-                        lastGoalMetDate: goalUpdate.lastGoalMetDate,
-                        streakFreezes,
-                        ...(streakResult.freezesConsumed > 0 && {
-                            lastFreezeUsedDate: today,
-                        }),
-                        totalWordsPracticed: { increment: wordCount },
-                        ...(isNewCalendarDay && {
-                            totalPracticeDays: { increment: 1 },
-                        }),
-                    },
-                });
-                // Detect unlocks against the final totals (runs after the update so a
-                // freeze reward is capped against the just-written streakFreezes).
-                const unlocked = await this.achievementService.detectAndUnlock(
-                    tx,
-                    userLoginId,
-                    {
-                        longestStreak: row.longestStreak,
-                        totalWordsPracticed: row.totalWordsPracticed,
-                        totalPracticeDays: row.totalPracticeDays,
-                    },
-                );
-                return { row, unlockedAchievements: unlocked };
-            });
-
-        const recentDays = await this.loadRecentDays(userLoginId, clientDate);
+        const recentDays = await this.loadRecentDays(userLoginId, clientToday);
         return {
-            ...this.toResponse(updated, clientDate, recentDays),
+            ...this.toResponse(updated, clientToday, recentDays),
             unlockedAchievements,
         };
+    }
+
+    /**
+     * Award "first practice of the day" and "daily goal met" XP, once per day
+     * ever. The `DailyHabitGrant` primary key is the guarantee: a replayed flush,
+     * a backdated day arriving late, or two devices racing can each pay for a
+     * given day at most once.
+     */
+    private async grantDailyConsistencyXp(
+        tx: Prisma.TransactionClient,
+        userLoginId: string,
+        dates: string[],
+        dailyGoal: number,
+        history: HabitDayPoint[],
+    ): Promise<void> {
+        const goalMetByDate = new Map(
+            history.map((day) => [day.date, isGoalMet(day.words, dailyGoal)]),
+        );
+
+        const candidates: {
+            practiceDate: string;
+            kind: string;
+            xpAwarded: number;
+        }[] = [];
+        for (const date of dates) {
+            candidates.push({
+                practiceDate: date,
+                kind: GRANT_FIRST_PRACTICE,
+                xpAwarded: XP_FIRST_PRACTICE_OF_DAY,
+            });
+            if (goalMetByDate.get(date)) {
+                candidates.push({
+                    practiceDate: date,
+                    kind: GRANT_GOAL_MET,
+                    xpAwarded: XP_DAILY_GOAL_MET,
+                });
+            }
+        }
+        if (candidates.length === 0) {
+            return;
+        }
+
+        const alreadyGranted = await tx.dailyHabitGrant.findMany({
+            where: {
+                userLoginId,
+                practiceDate: { in: dates.map(parseClientDate) },
+            },
+            select: { practiceDate: true, kind: true },
+        });
+        const grantedKeys = new Set(
+            alreadyGranted.map(
+                (row) => `${formatClientDate(row.practiceDate)}|${row.kind}`,
+            ),
+        );
+
+        const missing = candidates.filter(
+            (candidate) =>
+                !grantedKeys.has(
+                    `${candidate.practiceDate}|${candidate.kind}`,
+                ),
+        );
+        if (missing.length === 0) {
+            return;
+        }
+
+        const inserted = await tx.dailyHabitGrant.createMany({
+            data: missing.map((candidate) => ({
+                userLoginId,
+                practiceDate: parseClientDate(candidate.practiceDate),
+                kind: candidate.kind,
+                xpAwarded: candidate.xpAwarded,
+            })),
+            skipDuplicates: true,
+        });
+        if (inserted.count === 0) {
+            return;
+        }
+
+        // Only pay for rows this call actually inserted. When skipDuplicates
+        // dropped some, pay the cheapest subset rather than over-crediting.
+        const sorted = [...missing].sort((a, b) => a.xpAwarded - b.xpAwarded);
+        const xp = sorted
+            .slice(0, inserted.count)
+            .reduce((sum, candidate) => sum + candidate.xpAwarded, 0);
+        await this.userLevelService.awardXp(tx, userLoginId, xp);
     }
 
     async updateDailyGoal(

@@ -286,3 +286,171 @@ describe('calculateNextReview', () => {
         }
     });
 });
+
+/**
+ * Offline sessions are replayed on reconnect, so `reviewedAt` is in the past
+ * relative to the server clock. These cover that the schedule is derived from
+ * the review instant and not from sync time.
+ */
+describe('calculateNextReview with a backdated reviewedAt', () => {
+    const MS_PER_DAY = 86_400_000;
+
+    /** Chain a result back in as stored state for the next review. */
+    function chain(
+        result: SpacedRepetitionResult,
+        prev: WordProgressSchedulerInput,
+        reviewedAt: Date,
+    ): WordProgressSchedulerInput {
+        return {
+            ...prev,
+            easeFactor: result.easeFactor,
+            interval: result.interval,
+            repetitions: result.repetitions,
+            stability: result.stability,
+            state: result.state,
+            lapses: result.lapses,
+            learningSteps: result.learningSteps,
+            totalReviews: prev.totalReviews + 1,
+            lastReviewedAt: reviewedAt,
+            nextReviewAt: result.nextReviewAt,
+        };
+    }
+
+    it('schedules a mature card from the review instant, not from now', () => {
+        const reviewedAt = new Date(NOW.getTime() - 3 * MS_PER_DAY);
+        const input = emptyInput({
+            easeFactor: 5,
+            interval: 5,
+            repetitions: 4,
+            stability: 5,
+            totalReviews: 4,
+            state: State.Review,
+            lastReviewedAt: new Date(reviewedAt.getTime() - 5 * MS_PER_DAY),
+            nextReviewAt: reviewedAt,
+        });
+
+        const result = calculateNextReview(
+            AnswerQuality.CORRECT_WITH_HESITATION,
+            input,
+            reviewedAt,
+        );
+
+        // The card was answered three days ago with roughly a five-day interval,
+        // so it is due about two days from now — NOT five days from sync time.
+        expect(result.nextReviewAt.getTime()).toBeGreaterThan(
+            reviewedAt.getTime(),
+        );
+        expect(result.nextReviewAt.getTime()).toBeLessThan(
+            NOW.getTime() + result.interval * MS_PER_DAY,
+        );
+    });
+
+    it('leaves a backdated failed card already due', () => {
+        const reviewedAt = new Date(NOW.getTime() - 3 * MS_PER_DAY);
+        const input = emptyInput({
+            easeFactor: 5,
+            interval: 10,
+            repetitions: 4,
+            stability: 10,
+            totalReviews: 4,
+            state: State.Review,
+            lastReviewedAt: new Date(reviewedAt.getTime() - 10 * MS_PER_DAY),
+            nextReviewAt: reviewedAt,
+        });
+
+        const result = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            input,
+            reviewedAt,
+        );
+
+        // A relearning step of 10 minutes from three days ago is in the past, so
+        // the word correctly reappears in today's queue.
+        expect(result.nextReviewAt.getTime()).toBeLessThan(NOW.getTime());
+        expect(result.nextReviewAt).toEqual(
+            new Date(
+                reviewedAt.getTime() + FIRST_LEARNING_STEP_MINUTES * 60_000,
+            ),
+        );
+    });
+
+    it('floors elapsed days at zero when a card was reviewed after this answer', () => {
+        // Out-of-order arrival: an online review landed today, then a late
+        // offline batch from yesterday. A negative elapsed time would hand FSRS
+        // a nonsense retrievability.
+        const reviewedAt = new Date(NOW.getTime() - 1 * MS_PER_DAY);
+        const input = emptyInput({
+            easeFactor: 5,
+            interval: 3,
+            repetitions: 3,
+            stability: 3,
+            totalReviews: 3,
+            state: State.Review,
+            lastReviewedAt: NOW,
+            nextReviewAt: new Date(NOW.getTime() + 3 * MS_PER_DAY),
+        });
+
+        const result = calculateNextReview(
+            AnswerQuality.PERFECT,
+            input,
+            reviewedAt,
+        );
+
+        expect(Number.isFinite(result.stability)).toBe(true);
+        expect(result.stability).toBeGreaterThan(0);
+    });
+
+    it('advances learning steps across three repeats inside one offline session', () => {
+        // Again -> Again -> Good, 11 minutes apart. Before per-answer instants
+        // these collapsed to a single graded review and the steps never moved.
+        const start = new Date(NOW.getTime() - 2 * MS_PER_DAY);
+        const at = (minutes: number) =>
+            new Date(start.getTime() + minutes * 60_000);
+
+        let input = emptyInput({ nextReviewAt: start });
+
+        const first = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            input,
+            at(0),
+        );
+        input = chain(first, input, at(0));
+
+        const second = calculateNextReview(
+            AnswerQuality.COMPLETE_BLACKOUT,
+            input,
+            at(11),
+        );
+        input = chain(second, input, at(11));
+
+        const third = calculateNextReview(
+            AnswerQuality.CORRECT_WITH_HESITATION,
+            input,
+            at(22),
+        );
+
+        expect(first.repetitions).toBe(1);
+        expect(second.repetitions).toBe(2);
+        expect(third.repetitions).toBe(3);
+        // The final Good graduates the card off the intraday step.
+        expect(third.state).toBe(State.Review);
+        expect(third.interval).toBeGreaterThan(0);
+    });
+
+    it('is identical to the old behaviour when reviewedAt equals now', () => {
+        const input = emptyInput({
+            easeFactor: 5,
+            interval: 4,
+            repetitions: 3,
+            stability: 4,
+            totalReviews: 3,
+            state: State.Review,
+            lastReviewedAt: new Date(NOW.getTime() - 4 * MS_PER_DAY),
+            nextReviewAt: NOW,
+        });
+
+        const result = calculateNextReview(AnswerQuality.PERFECT, input, NOW);
+
+        expect(result.nextReviewAt.getTime()).toBeGreaterThan(NOW.getTime());
+    });
+});

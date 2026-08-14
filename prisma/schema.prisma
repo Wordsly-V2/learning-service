@@ -207,3 +207,35 @@ model UserPreferences {
 
   @@map("user_preferences")
 }
+
+// Idempotency ledger for client-replayed writes (offline sync flushes). The
+// client mints one UUID per flush; a retry after a lost response finds the row
+// and gets the ORIGINAL response back instead of re-applying XP and FSRS.
+// `response` is null while the work is in flight, which is how a losing racer
+// distinguishes "still running" (409, retry shortly) from "done" (replay).
+// Scoped by userLoginId so one user's ids can never collide with another's.
+model SyncRequest {
+  userLoginId     String   @map("user_login_id") @db.Uuid
+  clientRequestId String   @map("client_request_id") @db.Uuid
+  endpoint        String
+  response        Json?
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([userLoginId, clientRequestId])
+  @@index([createdAt])
+  @@map("sync_request")
+}
+
+// One-shot per-day consistency XP grants. The PK is the idempotency guarantee:
+// a replayed flush, a backdated day arriving late, or two racing batches can
+// each pay "first practice of 2026-08-11" at most once, ever.
+model DailyHabitGrant {
+  userLoginId  String   @map("user_login_id") @db.Uuid
+  practiceDate DateTime @map("practice_date") @db.Date
+  kind         String
+  xpAwarded    Int      @map("xp_awarded")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([userLoginId, practiceDate, kind])
+  @@map("daily_habit_grant")
+}

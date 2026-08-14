@@ -6,10 +6,12 @@ import {
     isStreakAtRisk,
     isStreakMilestone,
     lastNDays,
+    mergePracticeDays,
     nextGoalStreak,
     nextPracticeStreak,
     nextPracticeStreakWithFreezes,
     nextStreakMilestone,
+    recomputeHabitFromDays,
     resolveDisplayStreak,
 } from './daily-habit.logic';
 import { parseClientDate } from './daily-habit-date.util';
@@ -318,5 +320,132 @@ describe('daily-habit.logic', () => {
                 }),
             ).toBe(0);
         });
+    });
+});
+
+describe('recomputeHabitFromDays', () => {
+    const day = (date: string, words = 10, goalMet = true) => ({
+        date,
+        words,
+        goalMet,
+    });
+
+    it('returns zeros for an empty history', () => {
+        const result = recomputeHabitFromDays([], '2026-06-05');
+
+        expect(result).toEqual({
+            streak: 0,
+            longestStreak: 0,
+            goalStreak: 0,
+            longestGoalStreak: 0,
+            wordsToday: 0,
+            lastPracticeDate: null,
+            lastGoalMetDate: null,
+        });
+    });
+
+    it('counts a contiguous run ending today', () => {
+        const result = recomputeHabitFromDays(
+            [day('2026-06-03'), day('2026-06-04'), day('2026-06-05')],
+            '2026-06-05',
+        );
+
+        expect(result.streak).toBe(3);
+        expect(result.wordsToday).toBe(10);
+    });
+
+    it('keeps the streak alive when the run ended yesterday', () => {
+        const result = recomputeHabitFromDays(
+            [day('2026-06-03'), day('2026-06-04')],
+            '2026-06-05',
+        );
+
+        expect(result.streak).toBe(2);
+        expect(result.wordsToday).toBe(0);
+    });
+
+    it('reports a broken streak when the run ended three days ago', () => {
+        const result = recomputeHabitFromDays(
+            [day('2026-06-01'), day('2026-06-02')],
+            '2026-06-05',
+        );
+
+        expect(result.streak).toBe(0);
+        expect(result.longestStreak).toBe(2);
+    });
+
+    it('joins two runs when a backdated day fills the gap', () => {
+        // The headline fix: nextPracticeStreakWithFreezes structurally cannot do
+        // this, because a non-positive day delta is absorbed and the gap remains.
+        const withGap = recomputeHabitFromDays(
+            [
+                day('2026-06-01'),
+                day('2026-06-02'),
+                day('2026-06-04'),
+                day('2026-06-05'),
+            ],
+            '2026-06-05',
+        );
+        expect(withGap.streak).toBe(2);
+
+        const filled = recomputeHabitFromDays(
+            [
+                day('2026-06-01'),
+                day('2026-06-02'),
+                day('2026-06-03'),
+                day('2026-06-04'),
+                day('2026-06-05'),
+            ],
+            '2026-06-05',
+        );
+        expect(filled.streak).toBe(5);
+        expect(filled.longestStreak).toBe(5);
+    });
+
+    it('finds a longest streak the current streak never reaches', () => {
+        const result = recomputeHabitFromDays(
+            [
+                day('2026-05-01'),
+                day('2026-05-02'),
+                day('2026-05-03'),
+                day('2026-05-04'),
+                day('2026-06-05'),
+            ],
+            '2026-06-05',
+        );
+
+        expect(result.streak).toBe(1);
+        expect(result.longestStreak).toBe(4);
+    });
+
+    it('ignores days where the goal was not met for the goal streak', () => {
+        const result = recomputeHabitFromDays(
+            [
+                day('2026-06-03', 10, true),
+                day('2026-06-04', 2, false),
+                day('2026-06-05', 10, true),
+            ],
+            '2026-06-05',
+        );
+
+        expect(result.streak).toBe(3);
+        expect(result.goalStreak).toBe(1);
+        expect(result.longestGoalStreak).toBe(1);
+        expect(result.lastGoalMetDate).toBe('2026-06-05');
+    });
+});
+
+describe('mergePracticeDays', () => {
+    it('sums duplicate dates and sorts ascending', () => {
+        expect(
+            mergePracticeDays([
+                { clientDate: '2026-06-05', wordCount: 3 },
+                { clientDate: '2026-06-03', wordCount: 4 },
+                { clientDate: '2026-06-05', wordCount: 2 },
+            ]),
+        ).toEqual([
+            { clientDate: '2026-06-03', wordCount: 4 },
+            { clientDate: '2026-06-05', wordCount: 5 },
+        ]);
     });
 });

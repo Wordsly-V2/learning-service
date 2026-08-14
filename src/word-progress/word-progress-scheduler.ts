@@ -138,12 +138,17 @@ function inferFsrsState(input: WordProgressSchedulerInput): State {
     return State.Review;
 }
 
+/**
+ * @param reviewedAt When the review being scheduled actually happened. For an
+ * offline answer replayed on reconnect this is in the past, deliberately — it
+ * is not the server wall clock.
+ */
 export function wordProgressToFsrsCard(
     input: WordProgressSchedulerInput,
-    now: Date,
+    reviewedAt: Date,
 ): Card {
     if (input.totalReviews === 0) {
-        return createEmptyCard(now);
+        return createEmptyCard(reviewedAt);
     }
 
     // FSRS-native rows (stability > 0) carry full persisted card state, so we
@@ -158,12 +163,23 @@ export function wordProgressToFsrsCard(
         ? input.stability
         : Math.max(input.interval, 0.001);
 
+    // Clamped so the card was never last reviewed *after* the answer we are
+    // scheduling. An out-of-order arrival (an online review today, then a late
+    // offline batch from yesterday) would otherwise give FSRS a negative
+    // elapsed time — and ts-fsrs recomputes delta_t from `last_review` itself,
+    // so it throws rather than degrading. The service also clamps before
+    // calling, but the scheduler must not be able to fail a whole flush.
+    const lastReview =
+        input.lastReviewedAt && input.lastReviewedAt > reviewedAt
+            ? reviewedAt
+            : input.lastReviewedAt;
+
     return {
         due: input.nextReviewAt,
         stability,
         difficulty,
-        elapsed_days: input.lastReviewedAt
-            ? dateDiffInDays(input.lastReviewedAt, now)
+        elapsed_days: lastReview
+            ? Math.max(0, dateDiffInDays(lastReview, reviewedAt))
             : 0,
         scheduled_days: input.interval,
         learning_steps: isFsrsNative ? input.learningSteps : 0,
@@ -173,22 +189,30 @@ export function wordProgressToFsrsCard(
             isFsrsNative && input.state !== null
                 ? (input.state as State)
                 : inferFsrsState(input),
-        last_review: input.lastReviewedAt ?? undefined,
+        last_review: lastReview ?? undefined,
     };
 }
 
+/**
+ * @param reviewedAt When the review that produced this card happened.
+ */
 export function fsrsCardToProgress(
     card: Card,
-    now: Date,
+    reviewedAt: Date,
 ): SpacedRepetitionResult {
     const interval =
         card.scheduled_days > 0
             ? Math.min(Math.round(card.scheduled_days), MAX_INTERVAL_DAYS)
             : INTRADAY_INTERVAL;
 
+    // Guarantee the next review is strictly after the review that produced it.
+    // Deliberately compared against `reviewedAt`, NOT the server clock: a
+    // replayed offline answer's due date may legitimately already be in the
+    // past, which is exactly what makes the card due again right now instead of
+    // being pushed a full interval forward from sync time.
     let nextReviewAt = new Date(card.due);
-    if (nextReviewAt <= now) {
-        nextReviewAt = new Date(now);
+    if (nextReviewAt <= reviewedAt) {
+        nextReviewAt = new Date(reviewedAt);
         if (interval === INTRADAY_INTERVAL) {
             nextReviewAt.setMinutes(
                 nextReviewAt.getMinutes() + FIRST_LEARNING_STEP_MINUTES,
@@ -212,13 +236,18 @@ export function fsrsCardToProgress(
     };
 }
 
+/**
+ * @param reviewedAt When the user answered. May be in the past when an offline
+ * session is replayed on reconnect; the schedule is derived from it, not from
+ * the server clock.
+ */
 export function calculateNextReview(
     quality: AnswerQuality,
     input: WordProgressSchedulerInput,
-    now: Date,
+    reviewedAt: Date,
 ): SpacedRepetitionResult {
-    const card = wordProgressToFsrsCard(input, now);
+    const card = wordProgressToFsrsCard(input, reviewedAt);
     const rating = answerQualityToFsrsRating(quality);
-    const { card: nextCard } = wordslyFsrs.next(card, now, rating);
-    return fsrsCardToProgress(nextCard, now);
+    const { card: nextCard } = wordslyFsrs.next(card, reviewedAt, rating);
+    return fsrsCardToProgress(nextCard, reviewedAt);
 }

@@ -1,11 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+    ArrayMaxSize,
+    ArrayMinSize,
+    IsArray,
     IsInt,
     IsOptional,
     IsString,
+    IsUUID,
     Matches,
     Max,
     Min,
+    ValidateNested,
 } from 'class-validator';
 import { UnlockedAchievementDto } from '@/achievement/dto/achievement.dto';
 
@@ -44,6 +50,65 @@ export class RecordDailyPracticeDto {
     @IsString()
     @Matches(DATE_PATTERN)
     clientDate: string;
+}
+
+/** Distinct calendar days one batched flush may cover. */
+export const MAX_BATCH_PRACTICE_DAYS = 60;
+
+/** Practice days older than this are dropped rather than recorded. */
+export const MAX_BACKDATED_HABIT_DAYS = 90;
+
+export class DailyPracticeDayDto {
+    @ApiProperty({
+        description: 'Client local calendar date (YYYY-MM-DD)',
+        example: '2026-08-11',
+    })
+    @IsString()
+    @Matches(DATE_PATTERN)
+    clientDate: string;
+
+    @ApiProperty({
+        description: 'Words practiced on that day',
+        example: 12,
+        minimum: 1,
+        maximum: 1000,
+    })
+    @IsInt()
+    @Min(1)
+    @Max(1000)
+    wordCount: number;
+}
+
+export class BatchRecordDailyPracticeDto {
+    @ApiProperty({
+        description:
+            'One entry per local calendar day held offline. Duplicate dates are summed.',
+        type: [DailyPracticeDayDto],
+    })
+    @IsArray()
+    @ArrayMinSize(1)
+    @ArrayMaxSize(MAX_BATCH_PRACTICE_DAYS)
+    @ValidateNested({ each: true })
+    @Type(() => DailyPracticeDayDto)
+    days: DailyPracticeDayDto[];
+
+    @ApiProperty({
+        description:
+            "The client's TODAY — anchors wordsToday, practiceDate and streak decay.",
+        example: '2026-08-13',
+    })
+    @IsString()
+    @Matches(DATE_PATTERN)
+    clientDate: string;
+
+    @ApiPropertyOptional({
+        description:
+            'Client-generated UUID identifying this flush. Replaying the same id returns the original response without re-applying XP.',
+        example: '01936b3e-7c8f-7890-abcd-ef1234567890',
+    })
+    @IsOptional()
+    @IsUUID()
+    clientRequestId?: string;
 }
 
 export class UpdateDailyGoalDto {

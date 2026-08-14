@@ -19,6 +19,14 @@ export const XP_MASTERED = 25;
 // --- Consistency XP (awarded by daily-habit) ----------------------------------
 export const XP_FIRST_PRACTICE_OF_DAY = 10;
 export const XP_DAILY_GOAL_MET = 15;
+
+/**
+ * @deprecated No longer awarded. Streak milestones are paid by
+ * `achievementReward('streak-N')`, which is idempotent by primary key; this flat
+ * grant was keyed off a mutable streak cursor a replayed offline flush could
+ * re-trip, and it double-paid alongside the achievement. Kept only so any
+ * external reference still compiles.
+ */
 export const XP_STREAK_MILESTONE = 100;
 
 /** Quality at/above which an answer counts as correct (CORRECT_WITH_DIFFICULTY). */

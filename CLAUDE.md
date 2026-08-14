@@ -33,7 +33,17 @@ Config through `src/config/configuration.ts`; env validated at boot. The Kafka m
 
 ## Write-path invariants (`src/word-progress/word-progress.service.ts`)
 
-`recordAnswer` / `recordAnswersBulk` run one transaction that must stay atomic: upsert `WordProgress` + upsert the per-day `DailyReviewStat` aggregate (DB-side increments so concurrent sessions never lose writes) + award XP via `UserLevelService.awardXp(tx, ...)`. Bulk input is deduped by wordId (frontend already sends one worst-quality answer per word) and capped at `MAX_BULK_ANSWERS = 200`.
+`recordAnswer` / `recordAnswersBulk` run one transaction that must stay atomic: upsert `WordProgress` + upsert the per-day `DailyReviewStat` aggregate (DB-side increments so concurrent sessions never lose writes) + award XP via `UserLevelService.awardXp(tx, ...)`. Bulk input is capped at `MAX_BULK_ANSWERS = 500`.
+
+**Offline replay is a first-class case** — read `word-progress-replay.logic.ts` before touching the bulk path:
+
+- Each answer may carry its own `reviewedAt` (ISO instant) so FSRS schedules from when the user answered, not from sync time. It is client data, so it is clamped: never more than 2 minutes into the future, never older than 14 days, never earlier than that card's `lastReviewedAt`. `clientDate` is reinterpreted as the client's *today* and clamped to ±1 day of the server date.
+- Answers are **not** deduped by wordId. They are replayed in `reviewedAt` order with each card's state chained, so repeated reviews of one word in a single offline session advance FSRS learning steps. Only an exact `(wordId, quality, reviewedAt)` triplicate is dropped. The response is still one row per word.
+- `DailyReviewStat` gets one upsert per distinct calendar date in the batch, derived from each answer's `reviewedAt` + `tzOffsetMinutes`.
+- Idempotency: an optional `clientRequestId` goes through `SyncRequestService.runOnce` (`src/sync/`), which inserts the ledger row as the *first* statement of the same transaction so the primary key is the mutex. A replay returns the stored response with `replayed: true` and applies nothing. Without the id the work runs unprotected, exactly as older clients expect.
+- XP has a per-day cap (`XP_ELIGIBLE_ANSWERS_PER_DAY`). Scheduling, `totalReviews` and `DailyReviewStat` are never capped — only the currency.
+
+Streaks/habits: `recordPractice` delegates to `recordPracticeBatch`, so online and offline share one path. Streaks are **recomputed from the whole `DailyHabitDay` ledger** (`recomputeHabitFromDays`) rather than advanced from a cursor, which is the only way a backdated day can fill a gap; results are floored against the stored values so a recompute never takes a streak away. `practiceDate`/`wordsToday` always describe the client's today. Per-day consistency XP is ledgered in `DailyHabitGrant` (PK = one-shot guarantee); streak-milestone XP is owned solely by `AchievementService`.
 
 There is **no per-review history table** — only aggregates (`DailyReviewStat`, counters on `WordProgress`). Reports are built from those aggregates; keep new stats incremental, not scan-based (`learning-report.service.ts` is the reference implementation: parallel aggregate queries, bounded row counts).
 

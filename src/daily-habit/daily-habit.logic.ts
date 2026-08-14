@@ -298,3 +298,114 @@ export function habitMotivation(params: {
     }
     return `Practice ${goal} words a day to build your streak.`;
 }
+
+/** One day of practice history, as stored in DailyHabitDay. */
+export interface HabitDayPoint {
+    date: string;
+    words: number;
+    goalMet: boolean;
+}
+
+export interface RecomputedHabit {
+    /** Contiguous run ending at today or yesterday; 0 if the streak is broken. */
+    streak: number;
+    /** Longest contiguous run anywhere in history. */
+    longestStreak: number;
+    goalStreak: number;
+    longestGoalStreak: number;
+    wordsToday: number;
+    /** max(date) */
+    lastPracticeDate: string | null;
+    /** max(date where goalMet) */
+    lastGoalMetDate: string | null;
+}
+
+/**
+ * Derive every streak field from the full practice history instead of advancing a
+ * single cursor.
+ *
+ * A cursor-based streak cannot express days arriving out of order: an offline
+ * session from two days ago that fills a gap has to be able to JOIN two runs, and
+ * `nextPracticeStreakWithFreezes` structurally cannot do that (a non-positive day
+ * delta is absorbed and the gap stays). Walking the ledger can.
+ *
+ * Freeze-bridged streaks are deliberately not reconstructed here — which gaps a
+ * freeze covered is path-dependent and unbounded. The caller floors the result
+ * against the stored values, so a recompute can never take a streak away.
+ *
+ * @param days Ascending, distinct, YYYY-MM-DD.
+ */
+export function recomputeHabitFromDays(
+    days: HabitDayPoint[],
+    clientDate: string,
+): RecomputedHabit {
+    if (days.length === 0) {
+        return {
+            streak: 0,
+            longestStreak: 0,
+            goalStreak: 0,
+            longestGoalStreak: 0,
+            wordsToday: 0,
+            lastPracticeDate: null,
+            lastGoalMetDate: null,
+        };
+    }
+
+    let runLength = 0;
+    let longestStreak = 0;
+    let goalRunLength = 0;
+    let longestGoalStreak = 0;
+    let previousDate: string | null = null;
+    let previousGoalDate: string | null = null;
+    let lastGoalMetDate: string | null = null;
+
+    for (const day of days) {
+        runLength =
+            previousDate !== null && addClientDays(previousDate, 1) === day.date
+                ? runLength + 1
+                : 1;
+        longestStreak = Math.max(longestStreak, runLength);
+        previousDate = day.date;
+
+        if (day.goalMet) {
+            goalRunLength =
+                previousGoalDate !== null &&
+                addClientDays(previousGoalDate, 1) === day.date
+                    ? goalRunLength + 1
+                    : 1;
+            longestGoalStreak = Math.max(longestGoalStreak, goalRunLength);
+            previousGoalDate = day.date;
+            lastGoalMetDate = day.date;
+        }
+    }
+
+    const lastPracticeDate = days[days.length - 1].date;
+    const yesterday = addClientDays(clientDate, -1);
+
+    // Same ±1-day liveness rule the read path uses (effectivePracticeStreak).
+    const isLive = (date: string | null): boolean =>
+        date === clientDate || date === yesterday;
+
+    return {
+        streak: isLive(lastPracticeDate) ? runLength : 0,
+        longestStreak,
+        goalStreak: isLive(lastGoalMetDate) ? goalRunLength : 0,
+        longestGoalStreak,
+        wordsToday: days.find((day) => day.date === clientDate)?.words ?? 0,
+        lastPracticeDate,
+        lastGoalMetDate,
+    };
+}
+
+/** Sum duplicate dates and sort ascending, so a batch has one entry per day. */
+export function mergePracticeDays(
+    days: { clientDate: string; wordCount: number }[],
+): { clientDate: string; wordCount: number }[] {
+    const byDate = new Map<string, number>();
+    for (const day of days) {
+        byDate.set(day.clientDate, (byDate.get(day.clientDate) ?? 0) + day.wordCount);
+    }
+    return [...byDate.entries()]
+        .map(([clientDate, wordCount]) => ({ clientDate, wordCount }))
+        .sort((a, b) => a.clientDate.localeCompare(b.clientDate));
+}

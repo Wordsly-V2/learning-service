@@ -82,11 +82,7 @@ export class WordProgressController {
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
-        return this.wordProgressService.recordAnswersBulk(
-            userLoginId,
-            body.answers,
-            body.clientDate,
-        );
+        return this.wordProgressService.recordAnswersBulk(userLoginId, body);
     }
 
     @Post('due-word-ids')

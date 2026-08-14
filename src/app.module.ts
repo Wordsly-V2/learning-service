@@ -13,6 +13,7 @@ import { LearningSettingsModule } from './learning-settings/learning-settings.mo
 import { UserPreferencesModule } from './user-preferences/user-preferences.module';
 import { AchievementModule } from './achievement/achievement.module';
 import { NotificationModule } from './notification/notification.module';
+import { SyncModule } from './sync/sync.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
@@ -32,6 +33,7 @@ import { ScheduleModule } from '@nestjs/schedule';
         UserPreferencesModule,
         AchievementModule,
         NotificationModule,
+        SyncModule,
     ],
     controllers: [AppController],
     providers: [AppService],

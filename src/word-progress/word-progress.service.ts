@@ -1,10 +1,10 @@
 import { PrismaService } from '@/prisma/prisma.service';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { WordProgress } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import {
     AnswerQuality,
-    BulkAnswerItemDto,
+    BulkRecordAnswersDto,
     BulkRecordAnswersResponseDto,
     DueWordIdsResponseDto,
     GetDueWordIdsDto,
@@ -39,6 +39,61 @@ import {
     reviewTake,
 } from './word-progress-pacing.logic';
 import { nextCorrectStreak, resolveLeechState } from './leech.logic';
+import {
+    MAX_BATCH_DATES,
+    prepareReplayBatch,
+    resolveClientToday,
+} from './word-progress-replay.logic';
+import {
+    SYNC_ENDPOINT_BULK_ANSWERS,
+    SyncRequestService,
+} from '@/sync/sync-request.service';
+
+/**
+ * Answers per calendar date that still earn XP. Deliberately an XP-only cap:
+ * FSRS scheduling, totalReviews and DailyReviewStat are never capped, so a
+ * genuine power user's learning is untouched and only the leaderboard currency
+ * is bounded. ~3x the default dailyReviewLimit, so no honest user reaches it.
+ */
+export const XP_ELIGIBLE_ANSWERS_PER_DAY = 500;
+
+interface ReviewStatDelta {
+    reviews: number;
+    correctReviews: number;
+    newWords: number;
+}
+
+function getOrInitDelta(
+    byDate: Map<string, ReviewStatDelta>,
+    date: string,
+): ReviewStatDelta {
+    const existing = byDate.get(date);
+    if (existing) {
+        return existing;
+    }
+    const created: ReviewStatDelta = {
+        reviews: 0,
+        correctReviews: 0,
+        newWords: 0,
+    };
+    byDate.set(date, created);
+    return created;
+}
+
+/**
+ * Whether this date still has XP-eligible answers left, prior rows included.
+ * Called after the current answer has been counted into `deltaByDate`, so the
+ * comparison is inclusive: answer number XP_ELIGIBLE_ANSWERS_PER_DAY still pays.
+ */
+function isXpEligible(
+    date: string,
+    priorReviewsByDate: Map<string, number>,
+    deltaByDate: Map<string, ReviewStatDelta>,
+): boolean {
+    const prior = priorReviewsByDate.get(date) ?? 0;
+    const inBatch = deltaByDate.get(date)?.reviews ?? 0;
+    return prior + inBatch <= XP_ELIGIBLE_ANSWERS_PER_DAY;
+}
 
 type ProgressStatsRow = Pick<
     WordProgress,
@@ -52,10 +107,13 @@ type ProgressStatsRow = Pick<
 
 @Injectable()
 export class WordProgressService {
+    private readonly logger = new Logger(WordProgressService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly userLevelService: UserLevelService,
         private readonly learningSettingsService: LearningSettingsService,
+        private readonly syncRequests: SyncRequestService,
     ) {}
 
     /** Live goal streak for XP multiplier, decayed to the client's "today". */
@@ -79,14 +137,28 @@ export class WordProgressService {
         );
     }
 
-    private dedupeBulkAnswers(
-        answers: BulkAnswerItemDto[],
-    ): BulkAnswerItemDto[] {
-        const byWordId = new Map<string, BulkAnswerItemDto>();
-        for (const answer of answers) {
-            byWordId.set(answer.wordId, answer);
+    /**
+     * Reviews already recorded per date, so the XP cap can be applied without
+     * capping the reviews themselves. Read outside the transaction — it only
+     * gates a currency, so a slightly stale count is harmless.
+     */
+    private async readPriorReviewCounts(
+        userLoginId: string,
+        dates: string[],
+    ): Promise<Map<string, number>> {
+        if (dates.length === 0) {
+            return new Map();
         }
-        return [...byWordId.values()];
+        const rows = await this.prisma.dailyReviewStat.findMany({
+            where: {
+                userLoginId,
+                reviewDate: { in: dates.map(parseClientDate) },
+            },
+            select: { reviewDate: true, reviews: true },
+        });
+        return new Map(
+            rows.map((row) => [formatClientDate(row.reviewDate), row.reviews]),
+        );
     }
 
     private async upsertAnswer(
@@ -95,13 +167,21 @@ export class WordProgressService {
         wordId: string,
         quality: AnswerQuality,
         existing: WordProgress | null,
-        now: Date,
+        reviewedAt: Date,
         leechConfig: { threshold: number; autoSuspend: boolean },
     ): Promise<WordProgress> {
         const isCorrect = quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY;
         const where = {
             wordId_userLoginId: { wordId, userLoginId },
         } as const;
+
+        // Never let a replayed answer move a card backwards in time: an offline
+        // batch can arrive after an online review of the same word.
+        const effectiveAt =
+            existing?.lastReviewedAt && existing.lastReviewedAt > reviewedAt
+                ? existing.lastReviewedAt
+                : reviewedAt;
+
         const {
             easeFactor,
             interval,
@@ -111,7 +191,11 @@ export class WordProgressService {
             state,
             lapses,
             learningSteps,
-        } = calculateNextReview(quality, toSchedulerInput(existing, now), now);
+        } = calculateNextReview(
+            quality,
+            toSchedulerInput(existing, effectiveAt),
+            effectiveAt,
+        );
 
         const correctStreak = nextCorrectStreak(
             existing?.correctStreak ?? 0,
@@ -134,7 +218,7 @@ export class WordProgressService {
         if (isCorrect) {
             suspendedAt = null;
         } else if (leechConfig.autoSuspend && leech.isLeech) {
-            suspendedAt = suspendedAt ?? now;
+            suspendedAt = suspendedAt ?? effectiveAt;
         }
 
         return tx.wordProgress.upsert({
@@ -151,7 +235,7 @@ export class WordProgressService {
                 lapses,
                 learningSteps,
                 correctStreak,
-                lastReviewedAt: now,
+                lastReviewedAt: effectiveAt,
                 nextReviewAt,
                 totalReviews: 1,
                 correctReviews: isCorrect ? 1 : 0,
@@ -169,7 +253,7 @@ export class WordProgressService {
                 lapses,
                 learningSteps,
                 correctStreak,
-                lastReviewedAt: now,
+                lastReviewedAt: effectiveAt,
                 nextReviewAt,
                 totalReviews: { increment: 1 },
                 ...(isCorrect && {
@@ -279,94 +363,187 @@ export class WordProgressService {
         });
     }
 
+    /**
+     * Record a whole session's answers in one transaction.
+     *
+     * Answers may have been collected offline over several days, so each one
+     * carries its own `reviewedAt` and its own calendar date. They are replayed
+     * in chronological order with each card's state chained, which is what makes
+     * repeated reviews of the same word inside one offline session advance FSRS
+     * learning steps instead of collapsing to the last grade.
+     */
     async recordAnswersBulk(
         userLoginId: string,
-        answers: BulkAnswerItemDto[],
-        clientDate?: string,
+        body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
-        if (answers.length === 0) {
+        if (body.answers.length === 0) {
             return { results: [], xpMultiplier: 1 };
         }
-        if (answers.length > MAX_BULK_ANSWERS) {
+        if (body.answers.length > MAX_BULK_ANSWERS) {
             throw new BadRequestException(
                 `Bulk save exceeds maximum of ${MAX_BULK_ANSWERS} answers`,
             );
         }
 
-        const deduped = this.dedupeBulkAnswers(answers);
         const now = new Date();
-        const reviewDate = this.resolveReviewDate(clientDate, now);
-        const wordIds = deduped.map((answer) => answer.wordId);
+        const clientToday = resolveClientToday(body.clientDate, now);
+        const { answers, report } = prepareReplayBatch({
+            answers: body.answers,
+            tzOffsetMinutes: body.tzOffsetMinutes,
+            clientDate: clientToday,
+            now,
+        });
+
+        if (report.dates.length > MAX_BATCH_DATES) {
+            throw new BadRequestException(
+                `Bulk save spans ${report.dates.length} calendar dates, more than the maximum of ${MAX_BATCH_DATES}`,
+            );
+        }
+        if (report.clampedFuture > 0 || report.clampedPast > 0) {
+            this.logger.warn('offline-sync clamp', {
+                userLoginId,
+                answers: answers.length,
+                clampedFuture: report.clampedFuture,
+                clampedPast: report.clampedPast,
+                inferred: report.inferred,
+                dates: report.dates.length,
+                spanDays: report.spanDays,
+            });
+        }
+
+        const wordIds = [...new Set(answers.map((answer) => answer.wordId))];
         const settings =
             await this.learningSettingsService.getSettings(userLoginId);
+        const priorReviewsByDate = await this.readPriorReviewCounts(
+            userLoginId,
+            report.dates,
+        );
 
-        return await this.prisma.$transaction(async (tx) => {
-            const existingList = await tx.wordProgress.findMany({
-                where: { userLoginId, wordId: { in: wordIds } },
-            });
-            const existingByWordId = new Map(
-                existingList.map((progress) => [progress.wordId, progress]),
-            );
+        return await this.syncRequests.runOnce<BulkRecordAnswersResponseDto>(
+            userLoginId,
+            body.clientRequestId,
+            SYNC_ENDPOINT_BULK_ANSWERS,
+            async (tx) => {
+                const existingList = await tx.wordProgress.findMany({
+                    where: { userLoginId, wordId: { in: wordIds } },
+                });
+                const stateByWordId = new Map(
+                    existingList.map((progress) => [progress.wordId, progress]),
+                );
 
-            const results: WordProgressResponseDto[] = [];
-            let correctReviews = 0;
-            let newWords = 0;
-            let baseXpEarned = 0;
-            for (const { wordId, quality } of deduped) {
-                const prior = existingByWordId.get(wordId) ?? null;
-                if (prior === null) {
-                    newWords++;
+                // Final state per word, in first-appearance order. The response
+                // stays one row per word — returning three rows for one word
+                // would break the client's wordId-keyed reconciliation.
+                const finalByWordId = new Map<string, WordProgress>();
+                const responseOrder: string[] = [];
+                const deltaByDate = new Map<string, ReviewStatDelta>();
+                let baseXpEarned = 0;
+
+                for (const answer of answers) {
+                    const prior = stateByWordId.get(answer.wordId) ?? null;
+                    const wordProgress = await this.upsertAnswer(
+                        tx,
+                        userLoginId,
+                        answer.wordId,
+                        answer.quality,
+                        prior,
+                        answer.reviewedAt,
+                        {
+                            threshold: settings.leechThreshold,
+                            autoSuspend: settings.leechAutoSuspend,
+                        },
+                    );
+
+                    // Chain the state so the NEXT review of this word in the
+                    // same batch sees the card this review produced.
+                    stateByWordId.set(answer.wordId, wordProgress);
+                    if (!finalByWordId.has(answer.wordId)) {
+                        responseOrder.push(answer.wordId);
+                    }
+                    finalByWordId.set(answer.wordId, wordProgress);
+
+                    const delta = getOrInitDelta(deltaByDate, answer.reviewDate);
+                    delta.reviews++;
+                    if (
+                        answer.quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY
+                    ) {
+                        delta.correctReviews++;
+                    }
+                    // First-ever answer only, so a word first seen on day 1 of a
+                    // multi-day batch counts as new on day 1 and nowhere else.
+                    if (prior === null) {
+                        delta.newWords++;
+                    }
+
+                    if (
+                        isXpEligible(
+                            answer.reviewDate,
+                            priorReviewsByDate,
+                            deltaByDate,
+                        )
+                    ) {
+                        baseXpEarned += xpForAnswer({
+                            quality: answer.quality,
+                            isNewWord: prior === null,
+                            wasMastered: prior
+                                ? isMastered(prior.state, prior.interval)
+                                : false,
+                            isMastered: isMastered(
+                                wordProgress.state,
+                                wordProgress.interval,
+                            ),
+                        });
+                    }
                 }
-                if (quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY) {
-                    correctReviews++;
+
+                // One aggregate row per calendar date, so a multi-day flush
+                // produces correct per-day chart rows instead of dumping
+                // everything on the day it happened to sync.
+                for (const [date, delta] of deltaByDate) {
+                    await this.recordReviewStat(
+                        tx,
+                        userLoginId,
+                        parseClientDate(date),
+                        delta,
+                    );
                 }
-                const wordProgress = await this.upsertAnswer(
+
+                // One XP award for the whole session, scaled by the streak
+                // multiplier live at the client's today — XP is earned when it is
+                // banked, so the multiplier is deliberately not back-datable.
+                const goalStreak = await this.liveGoalStreak(
                     tx,
                     userLoginId,
-                    wordId,
-                    quality,
-                    prior,
+                    clientToday,
                     now,
-                    {
-                        threshold: settings.leechThreshold,
-                        autoSuspend: settings.leechAutoSuspend,
-                    },
                 );
-                baseXpEarned += xpForAnswer({
-                    quality,
-                    isNewWord: prior === null,
-                    wasMastered: prior
-                        ? isMastered(prior.state, prior.interval)
-                        : false,
-                    isMastered: isMastered(
-                        wordProgress.state,
-                        wordProgress.interval,
+                const xpMultiplier = streakXpMultiplier(goalStreak);
+                const xpEarned = applyStreakMultiplier(
+                    baseXpEarned,
+                    goalStreak,
+                );
+                const levelEvent = await this.userLevelService.awardXp(
+                    tx,
+                    userLoginId,
+                    xpEarned,
+                );
+
+                return {
+                    results: responseOrder.map((wordId) =>
+                        this.mapToProgressResponse(finalByWordId.get(wordId)!),
                     ),
-                });
-                existingByWordId.set(wordId, wordProgress);
-                results.push(this.mapToProgressResponse(wordProgress));
-            }
-            await this.recordReviewStat(tx, userLoginId, reviewDate, {
-                reviews: deduped.length,
-                correctReviews,
-                newWords,
-            });
-            // One XP award for the whole session, scaled by the streak multiplier.
-            const goalStreak = await this.liveGoalStreak(
-                tx,
-                userLoginId,
-                clientDate,
-                now,
-            );
-            const xpMultiplier = streakXpMultiplier(goalStreak);
-            const xpEarned = applyStreakMultiplier(baseXpEarned, goalStreak);
-            const levelEvent = await this.userLevelService.awardXp(
-                tx,
-                userLoginId,
-                xpEarned,
-            );
-            return { results, levelEvent, xpMultiplier };
-        });
+                    levelEvent,
+                    xpMultiplier,
+                };
+            },
+            {
+                // Prisma's default interactive timeout is 5s, which a
+                // MAX_BULK_ANSWERS-sized batch of sequential upserts will blow.
+                maxWait: 10_000,
+                timeout: 60_000,
+                emptyOnTruncated: () => ({ results: [], xpMultiplier: 1 }),
+            },
+        );
     }
 
     async getDueWordIds(

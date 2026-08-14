@@ -18,6 +18,7 @@ import {
     ApiTags,
 } from '@nestjs/swagger';
 import {
+    BatchRecordDailyPracticeDto,
     DailyHabitQueryDto,
     DailyHabitResponseDto,
     RecordDailyPracticeDto,
@@ -73,6 +74,25 @@ export class DailyHabitController {
         @Body() body: RecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
         return this.dailyHabitService.recordPractice(userLoginId, body);
+    }
+
+    @Post('record-practice/batch')
+    @ApiOperation({
+        summary: 'Record words practiced across several days',
+        description:
+            'For clients flushing sessions collected offline over more than one calendar day. Streaks are recomputed from the full day history, so a backdated day can fill a gap.',
+    })
+    @ApiBody({ type: BatchRecordDailyPracticeDto })
+    @ApiResponse({
+        status: 200,
+        description: 'Practice recorded successfully',
+        type: DailyHabitResponseDto,
+    })
+    async recordPracticeBatch(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Body() body: BatchRecordDailyPracticeDto,
+    ): Promise<DailyHabitResponseDto> {
+        return this.dailyHabitService.recordPracticeBatch(userLoginId, body);
     }
 
     @Patch('goal')

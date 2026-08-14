@@ -6,6 +6,7 @@ import {
     IsBoolean,
     IsEnum,
     IsInt,
+    IsISO8601,
     IsOptional,
     IsString,
     IsUUID,
@@ -86,10 +87,19 @@ export class BulkAnswerItemDto {
     })
     @IsEnum(AnswerQuality)
     quality: AnswerQuality;
+
+    @ApiPropertyOptional({
+        description:
+            'ISO-8601 instant the user actually answered. Offline clients send the real answer time so FSRS schedules from when the review happened rather than from sync time. Defaults to server receipt time; clamped server-side (see MAX_BACKDATE_DAYS / MAX_FUTURE_SKEW_MS).',
+        example: '2026-08-11T14:03:22.117Z',
+    })
+    @IsOptional()
+    @IsISO8601({ strict: true })
+    reviewedAt?: string;
 }
 
 /** Max answers per bulk practice session save. */
-export const MAX_BULK_ANSWERS = 200;
+export const MAX_BULK_ANSWERS = 500;
 
 export class BulkRecordAnswersDto {
     @ApiProperty({
@@ -104,13 +114,35 @@ export class BulkRecordAnswersDto {
 
     @ApiPropertyOptional({
         description:
-            'Client local calendar date (YYYY-MM-DD) the session happened on. Defaults to the server date when omitted.',
+            "Client local calendar date (YYYY-MM-DD) for the client's TODAY. Defaults to the server date when omitted.",
         example: '2026-06-05',
     })
     @IsOptional()
     @IsString()
     @Matches(CLIENT_DATE_PATTERN)
     clientDate?: string;
+
+    @ApiPropertyOptional({
+        description:
+            "Minutes to ADD to a UTC instant to get the user's local wall-clock time (i.e. -getTimezoneOffset()). Used to derive each answer's local calendar date from its reviewedAt. Falls back to clientDate when omitted.",
+        example: 420,
+        minimum: -840,
+        maximum: 840,
+    })
+    @IsOptional()
+    @IsInt()
+    @Min(-840)
+    @Max(840)
+    tzOffsetMinutes?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Client-generated UUID identifying this flush. Replaying the same id returns the original response without re-applying XP or FSRS.',
+        example: '01936b3e-7c8f-7890-abcd-ef1234567890',
+    })
+    @IsOptional()
+    @IsUUID()
+    clientRequestId?: string;
 }
 
 export class GetDueWordIdsDto {
@@ -294,6 +326,13 @@ export class BulkRecordAnswersResponseDto {
         example: 1.25,
     })
     xpMultiplier: number;
+
+    @ApiPropertyOptional({
+        description:
+            'True when this response was replayed from the idempotency ledger — nothing was applied, so the client must not re-animate XP.',
+        example: false,
+    })
+    replayed?: boolean;
 }
 
 export class DueWordDto extends WordProgressResponseDto {

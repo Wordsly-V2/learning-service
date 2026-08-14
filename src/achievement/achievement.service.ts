@@ -1,6 +1,6 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
     Achievement,
     AchievementInput,
@@ -10,6 +10,13 @@ import { MAX_STREAK_FREEZES } from '@/daily-habit/daily-habit.logic';
 import { UserLevelService } from '@/user-level/user-level.service';
 import { achievementReward, diffNewlyUnlocked } from './achievement.logic';
 import { UnlockedAchievementDto } from './dto/achievement.dto';
+
+function isUniqueViolation(error: unknown): boolean {
+    return (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+    );
+}
 
 @Injectable()
 export class AchievementService {
@@ -48,10 +55,32 @@ export class AchievementService {
         let freezesToAdd = 0;
         const now = new Date();
 
+        // Insert per key rather than in one createMany + skipDuplicates: two
+        // concurrent writes (an online session and an offline flush landing
+        // together) can both compute the same newKeys, and skipDuplicates would
+        // silently drop one row while both still paid its XP. A failed insert
+        // here means someone else already unlocked it, so we skip the reward.
         for (const key of newKeys) {
             const meta = byKey.get(key);
             if (!meta) continue;
             const reward = achievementReward(key);
+
+            try {
+                await tx.userAchievement.create({
+                    data: {
+                        userLoginId,
+                        key,
+                        unlockedAt: now,
+                        xpAwarded: reward.xp,
+                    },
+                });
+            } catch (error) {
+                if (isUniqueViolation(error)) {
+                    continue;
+                }
+                throw error;
+            }
+
             totalXp += reward.xp;
             if (reward.streakFreeze) {
                 freezesToAdd += 1;
@@ -65,16 +94,6 @@ export class AchievementService {
                 unlockedAt: now,
             });
         }
-
-        await tx.userAchievement.createMany({
-            data: unlocked.map((u) => ({
-                userLoginId,
-                key: u.key,
-                unlockedAt: u.unlockedAt,
-                xpAwarded: u.xpAwarded,
-            })),
-            skipDuplicates: true,
-        });
 
         if (totalXp > 0) {
             await this.userLevelService.awardXp(tx, userLoginId, totalXp);
