@@ -1,4 +1,6 @@
 import {
+    addClientDays,
+    bridgeableGap,
     effectiveGoalStreak,
     effectivePracticeStreak,
     freezesAfterPractice,
@@ -11,6 +13,7 @@ import {
     nextPracticeStreak,
     nextPracticeStreakWithFreezes,
     nextStreakMilestone,
+    reconcileFrozenGaps,
     recomputeHabitFromDays,
     resolveDisplayStreak,
 } from './daily-habit.logic';
@@ -341,6 +344,8 @@ describe('recomputeHabitFromDays', () => {
             wordsToday: 0,
             lastPracticeDate: null,
             lastGoalMetDate: null,
+            totalGoalDays: 0,
+            totalPracticeDays: 0,
         });
     });
 
@@ -418,6 +423,85 @@ describe('recomputeHabitFromDays', () => {
         expect(result.longestStreak).toBe(4);
     });
 
+    it('bridges a frozen gap without counting the frozen days', () => {
+        // The reported bug: 45-day streak, two days missed and paid for with
+        // freezes, then a session on the third day. The streak must reach 46 —
+        // the frozen days keep the chain, they are not practice days.
+        const days = [
+            ...Array.from({ length: 45 }, (_, index) =>
+                day(addClientDays('2026-06-01', index)),
+            ),
+            { ...day('2026-07-16', 0, false), frozen: true },
+            { ...day('2026-07-17', 0, false), frozen: true },
+            day('2026-07-18'),
+        ];
+
+        const result = recomputeHabitFromDays(days, '2026-07-18');
+
+        expect(result.streak).toBe(46);
+        expect(result.longestStreak).toBe(46);
+        expect(result.lastPracticeDate).toBe('2026-07-18');
+        expect(result.totalPracticeDays).toBe(46);
+    });
+
+    it('keeps growing the streak on the days after a frozen gap', () => {
+        const days = [
+            day('2026-06-01'),
+            day('2026-06-02'),
+            { ...day('2026-06-03', 0, false), frozen: true },
+            day('2026-06-04'),
+            day('2026-06-05'),
+        ];
+
+        expect(
+            recomputeHabitFromDays(days.slice(0, 4), '2026-06-04').streak,
+        ).toBe(3);
+        expect(recomputeHabitFromDays(days, '2026-06-05').streak).toBe(4);
+    });
+
+    it('restarts the goal streak after a frozen gap, re-arming freeze earning', () => {
+        const days = [
+            day('2026-06-01'),
+            day('2026-06-02'),
+            { ...day('2026-06-03', 0, false), frozen: true },
+            day('2026-06-04'),
+        ];
+
+        const result = recomputeHabitFromDays(days, '2026-06-04');
+
+        expect(result.streak).toBe(3);
+        expect(result.goalStreak).toBe(1);
+    });
+
+    it('does not let a frozen day start or resurrect a run', () => {
+        const result = recomputeHabitFromDays(
+            [
+                { ...day('2026-06-01', 0, false), frozen: true },
+                { ...day('2026-06-03', 0, false), frozen: true },
+                day('2026-06-04'),
+            ],
+            '2026-06-04',
+        );
+
+        expect(result.streak).toBe(1);
+        expect(result.totalPracticeDays).toBe(1);
+    });
+
+    it('counts goal days and practice days separately', () => {
+        const result = recomputeHabitFromDays(
+            [
+                day('2026-06-02', 10, true),
+                day('2026-06-03', 2, false),
+                { ...day('2026-06-04', 0, false), frozen: true },
+                day('2026-06-05', 10, true),
+            ],
+            '2026-06-05',
+        );
+
+        expect(result.totalGoalDays).toBe(2);
+        expect(result.totalPracticeDays).toBe(3);
+    });
+
     it('ignores days where the goal was not met for the goal streak', () => {
         const result = recomputeHabitFromDays(
             [
@@ -432,6 +516,91 @@ describe('recomputeHabitFromDays', () => {
         expect(result.goalStreak).toBe(1);
         expect(result.longestGoalStreak).toBe(1);
         expect(result.lastGoalMetDate).toBe('2026-06-05');
+    });
+});
+
+describe('bridgeableGap', () => {
+    const base = {
+        lastPracticeDate: '2026-06-01',
+        resumeDate: '2026-06-04',
+        streak: 45,
+        freezes: 2,
+    };
+
+    it('covers every missed day when the bank can pay for them', () => {
+        expect(bridgeableGap(base)).toEqual({
+            dates: ['2026-06-02', '2026-06-03'],
+            freezesConsumed: 2,
+        });
+    });
+
+    it('bridges nothing when the gap outruns the bank', () => {
+        expect(bridgeableGap({ ...base, freezes: 1 })).toEqual({
+            dates: [],
+            freezesConsumed: 0,
+        });
+    });
+
+    it('bridges nothing when there is no gap', () => {
+        expect(
+            bridgeableGap({ ...base, resumeDate: '2026-06-02' }).dates,
+        ).toEqual([]);
+    });
+
+    it('bridges nothing without a live streak, a bank, or a prior day', () => {
+        expect(bridgeableGap({ ...base, streak: 0 }).freezesConsumed).toBe(0);
+        expect(bridgeableGap({ ...base, freezes: 0 }).freezesConsumed).toBe(0);
+        expect(
+            bridgeableGap({ ...base, lastPracticeDate: null }).freezesConsumed,
+        ).toBe(0);
+    });
+});
+
+describe('reconcileFrozenGaps', () => {
+    const day = (date: string) => ({ date, words: 10, goalMet: true });
+
+    it('materializes the gap a stored streak implies but the ledger lacks', () => {
+        // Written by the old code: the freeze was displayed, never recorded, so
+        // the ledger shows a hole the stored streak of 5 cannot explain.
+        const days = [
+            day('2026-06-01'),
+            day('2026-06-02'),
+            day('2026-06-03'),
+            // 06-04 missed, covered by a freeze at the time
+            day('2026-06-05'),
+            day('2026-06-06'),
+        ];
+
+        expect(reconcileFrozenGaps(days, 5)).toEqual({
+            dates: ['2026-06-04'],
+            freezesConsumed: 1,
+        });
+    });
+
+    it('leaves a ledger that already explains the streak alone', () => {
+        const days = [day('2026-06-01'), day('2026-06-02'), day('2026-06-03')];
+
+        expect(reconcileFrozenGaps(days, 3)).toEqual({
+            dates: [],
+            freezesConsumed: 0,
+        });
+    });
+
+    it('refuses to invent days for a streak wider gaps cannot justify', () => {
+        const days = [day('2026-06-01'), day('2026-06-06')];
+
+        expect(reconcileFrozenGaps(days, 5)).toEqual({
+            dates: [],
+            freezesConsumed: 0,
+        });
+    });
+
+    it('does nothing for a streak of one or none', () => {
+        const days = [day('2026-06-01'), day('2026-06-06')];
+
+        expect(reconcileFrozenGaps(days, 1).dates).toEqual([]);
+        expect(reconcileFrozenGaps(days, 0).dates).toEqual([]);
+        expect(reconcileFrozenGaps([], 10).dates).toEqual([]);
     });
 });
 

@@ -133,6 +133,13 @@ export class DailyHabitDayDto {
 
     @ApiProperty({ example: true })
     goalMet: boolean;
+
+    @ApiProperty({
+        description:
+            'No practice, but a banked streak freeze covered the day — the streak survived it',
+        example: false,
+    })
+    frozen: boolean;
 }
 
 export class DailyHabitResponseDto {
@@ -166,8 +173,17 @@ export class DailyHabitResponseDto {
     @ApiProperty({ example: 240 })
     totalWordsPracticed: number;
 
-    @ApiProperty({ example: 18 })
+    @ApiProperty({
+        description: 'Days with any practice, all time',
+        example: 18,
+    })
     totalPracticeDays: number;
+
+    @ApiProperty({
+        description: 'Days the daily goal was completed, all time',
+        example: 15,
+    })
+    totalGoalDays: number;
 
     @ApiProperty({ example: 42 })
     wordsThisWeek: number;

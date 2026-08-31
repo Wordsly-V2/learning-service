@@ -73,6 +73,9 @@ model DailyHabit {
 
   totalWordsPracticed Int @default(0) @map("total_words_practiced")
   totalPracticeDays   Int @default(0) @map("total_practice_days")
+  // Days the daily goal was actually met, derived from the DailyHabitDay ledger
+  // on every write. totalPracticeDays counts any practice; this counts completion.
+  totalGoalDays       Int @default(0) @map("total_goal_days")
 
   streakFreezes      Int       @default(0) @map("streak_freezes")
   lastFreezeUsedDate DateTime? @map("last_freeze_used_date") @db.Date
@@ -121,11 +124,17 @@ model UserLevel {
 }
 
 // Per-day activity log for history and weekly stats.
+//
+// A `frozen` row is a day the user did NOT practice but a banked streak freeze
+// paid for: 0 words, goalMet false. It exists so the streak recompute can see a
+// continuous chain across the gap — without it, a freeze-bridged streak is only
+// ever displayed, never recorded, and the recompute lapses it on the next write.
 model DailyHabitDay {
   userLoginId    String   @map("user_login_id") @db.Uuid
   practiceDate   DateTime @map("practice_date") @db.Date
   wordsPracticed Int      @default(0) @map("words_practiced")
   goalMet        Boolean  @default(false) @map("goal_met")
+  frozen         Boolean  @default(false)
 
   habit DailyHabit @relation(fields: [userLoginId], references: [userLoginId], onDelete: Cascade)
 

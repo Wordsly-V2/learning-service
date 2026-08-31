@@ -11,6 +11,8 @@ describe('DailyHabitService', () => {
         practiceDate: Date;
         wordsPracticed: number;
         goalMet: boolean;
+        /** Missed day paid for by a streak freeze. */
+        frozen?: boolean;
     };
 
     let days: DayRow[];
@@ -27,6 +29,8 @@ describe('DailyHabitService', () => {
             findMany: jest.Mock;
             update: jest.Mock;
             upsert: jest.Mock;
+            createMany: jest.Mock;
+            count: jest.Mock;
         };
         dailyHabitGrant: {
             findMany: jest.Mock;
@@ -40,7 +44,8 @@ describe('DailyHabitService', () => {
 
     const findDay = (date: Date): DayRow | undefined =>
         days.find(
-            (row) => formatClientDate(row.practiceDate) === formatClientDate(date),
+            (row) =>
+                formatClientDate(row.practiceDate) === formatClientDate(date),
         );
 
     beforeEach(() => {
@@ -74,32 +79,28 @@ describe('DailyHabitService', () => {
                     habitRow = next;
                     return Promise.resolve(next);
                 }),
-                upsert: jest.fn(
-                    (args: { create: Record<string, unknown> }) => {
-                        habitRow ??= {
-                            dailyGoal: 10,
-                            wordsToday: 0,
-                            streak: 0,
-                            longestStreak: 0,
-                            goalStreak: 0,
-                            longestGoalStreak: 0,
-                            lastPracticeDate: null,
-                            lastGoalMetDate: null,
-                            totalWordsPracticed: 0,
-                            totalPracticeDays: 0,
-                            streakFreezes: 0,
-                            lastFreezeUsedDate: null,
-                            ...args.create,
-                        };
-                        return Promise.resolve(habitRow);
-                    },
-                ),
+                upsert: jest.fn((args: { create: Record<string, unknown> }) => {
+                    habitRow ??= {
+                        dailyGoal: 10,
+                        wordsToday: 0,
+                        streak: 0,
+                        longestStreak: 0,
+                        goalStreak: 0,
+                        longestGoalStreak: 0,
+                        lastPracticeDate: null,
+                        lastGoalMetDate: null,
+                        totalWordsPracticed: 0,
+                        totalPracticeDays: 0,
+                        streakFreezes: 0,
+                        lastFreezeUsedDate: null,
+                        ...args.create,
+                    };
+                    return Promise.resolve(habitRow);
+                }),
             },
             dailyHabitDay: {
                 findMany: jest.fn(
-                    (args?: {
-                        where?: { practiceDate?: { in?: Date[] } };
-                    }) => {
+                    (args?: { where?: { practiceDate?: { in?: Date[] } } }) => {
                         const filter = args?.where?.practiceDate?.in;
                         const rows = filter
                             ? days.filter((row) =>
@@ -131,16 +132,30 @@ describe('DailyHabitService', () => {
                         if (existing) {
                             existing.wordsPracticed +=
                                 args.update.wordsPracticed.increment;
+                            // Real practice on a frozen day makes it a practice
+                            // day again.
+                            existing.frozen = false;
                             return Promise.resolve(existing);
                         }
                         const created: DayRow = {
                             practiceDate: date,
                             wordsPracticed: args.create.wordsPracticed,
                             goalMet: args.create.goalMet,
+                            frozen: false,
                         };
                         days.push(created);
                         return Promise.resolve(created);
                     },
+                ),
+                createMany: jest.fn((args: { data: DayRow[] }) => {
+                    const fresh = args.data.filter(
+                        (row) => !findDay(row.practiceDate),
+                    );
+                    days.push(...fresh);
+                    return Promise.resolve({ count: fresh.length });
+                }),
+                count: jest.fn(() =>
+                    Promise.resolve(days.filter((row) => row.goalMet).length),
                 ),
                 update: jest.fn(
                     (args: {
@@ -309,7 +324,7 @@ describe('DailyHabitService', () => {
         });
 
         expect(result.wordsToday).toBe(8);
-        expect(formatClientDate(habitRow!.practiceDate as Date)).toBe(today);
+        expect(formatClientDate(habitRow.practiceDate as Date)).toBe(today);
         expect(result.totalWordsPracticed).toBe(14);
     });
 
@@ -454,6 +469,214 @@ describe('DailyHabitService', () => {
 
         expect(awardXp).not.toHaveBeenCalled();
         expect(habitRow!.totalWordsPracticed).toBe(20);
+    });
+
+    describe('streak freezes', () => {
+        /** A long unbroken run of goal-met days ending on `end`. */
+        const runEndingOn = (end: string, length: number): DayRow[] =>
+            Array.from({ length }, (_, index) => ({
+                practiceDate: parseClientDate(
+                    formatClientDate(
+                        new Date(
+                            parseClientDate(end).getTime() -
+                                (length - 1 - index) * 86_400_000,
+                        ),
+                    ),
+                ),
+                wordsPracticed: 10,
+                goalMet: true,
+                frozen: false,
+            }));
+
+        const habitAfterRun = (
+            end: string,
+            streak: number,
+            freezes: number,
+        ): Record<string, unknown> => ({
+            dailyGoal: 10,
+            wordsToday: 10,
+            streak,
+            longestStreak: streak,
+            goalStreak: streak,
+            longestGoalStreak: streak,
+            practiceDate: parseClientDate(end),
+            lastPracticeDate: parseClientDate(end),
+            lastGoalMetDate: parseClientDate(end),
+            totalWordsPracticed: streak * 10,
+            totalPracticeDays: streak,
+            totalGoalDays: streak,
+            streakFreezes: freezes,
+            lastFreezeUsedDate: null,
+        });
+
+        it('spends the freezes and grows the streak when the user comes back', async () => {
+            // The reported bug: 45-day streak, two missed days covered by the two
+            // banked freezes, then a session. The streak used to stick at 45 and
+            // the balance used to snap back to 2/2.
+            days = runEndingOn('2026-06-02', 45);
+            habitRow = habitAfterRun('2026-06-02', 45, 2);
+
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 10 }],
+                clientDate: today,
+            });
+
+            expect(result.streak).toBe(46);
+            expect(result.longestStreak).toBe(46);
+            expect(result.streakFreezes).toBe(0);
+            expect(result.streakShielded).toBe(false);
+            // The goal run restarts, so the next freeze must be re-earned.
+            expect(result.goalStreak).toBe(1);
+            // The missed days are recorded as frozen, not as practice.
+            expect(result.totalPracticeDays).toBe(46);
+            expect(days.filter((day) => day.frozen)).toHaveLength(2);
+        });
+
+        it('keeps counting up on the days after the freeze was spent', async () => {
+            days = [
+                ...runEndingOn('2026-06-02', 45),
+                {
+                    practiceDate: parseClientDate('2026-06-03'),
+                    wordsPracticed: 0,
+                    goalMet: false,
+                    frozen: true,
+                },
+                {
+                    practiceDate: parseClientDate(yesterday),
+                    wordsPracticed: 10,
+                    goalMet: true,
+                    frozen: false,
+                },
+            ];
+            habitRow = {
+                ...habitAfterRun(yesterday, 46, 0),
+                longestStreak: 46,
+                goalStreak: 1,
+                longestGoalStreak: 45,
+            };
+
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 10 }],
+                clientDate: today,
+            });
+
+            expect(result.streak).toBe(47);
+            expect(result.goalStreak).toBe(2);
+        });
+
+        it('re-earns the first freeze after three consecutive goal days', async () => {
+            days = [
+                ...runEndingOn('2026-06-01', 45),
+                {
+                    practiceDate: parseClientDate('2026-06-02'),
+                    wordsPracticed: 0,
+                    goalMet: false,
+                    frozen: true,
+                },
+                {
+                    practiceDate: parseClientDate('2026-06-03'),
+                    wordsPracticed: 10,
+                    goalMet: true,
+                    frozen: false,
+                },
+                {
+                    practiceDate: parseClientDate(yesterday),
+                    wordsPracticed: 10,
+                    goalMet: true,
+                    frozen: false,
+                },
+            ];
+            habitRow = {
+                ...habitAfterRun(yesterday, 47, 0),
+                goalStreak: 2,
+                longestGoalStreak: 45,
+            };
+
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 10 }],
+                clientDate: today,
+            });
+
+            expect(result.goalStreak).toBe(3);
+            expect(result.streakFreezes).toBe(1);
+        });
+
+        it('lapses the streak when the gap outruns the bank', async () => {
+            // Three missed days, one freeze: nothing is bridged, nothing spent.
+            days = runEndingOn('2026-06-01', 45);
+            habitRow = habitAfterRun('2026-06-01', 45, 1);
+
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 10 }],
+                clientDate: today,
+            });
+
+            expect(result.streak).toBe(1);
+            expect(result.longestStreak).toBe(45);
+            expect(result.streakFreezes).toBe(1);
+            expect(days.some((day) => day.frozen)).toBe(false);
+        });
+
+        it('repairs a row whose stored streak the ledger cannot explain', async () => {
+            // Written by the old code: the freeze was displayed but never
+            // recorded, so the ledger has a hole and the stored streak was
+            // pinned at 45 by the removed Math.max floor.
+            days = [
+                ...runEndingOn('2026-06-01', 43),
+                // 06-02 missed, covered by a freeze that was never debited
+                {
+                    practiceDate: parseClientDate('2026-06-03'),
+                    wordsPracticed: 10,
+                    goalMet: true,
+                    frozen: false,
+                },
+                {
+                    practiceDate: parseClientDate(yesterday),
+                    wordsPracticed: 10,
+                    goalMet: true,
+                    frozen: false,
+                },
+            ];
+            habitRow = habitAfterRun(yesterday, 45, 2);
+
+            // Under the goal today, so the repair's debit isn't masked by an
+            // earn from a threshold crossing.
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 3 }],
+                clientDate: today,
+            });
+
+            expect(result.streak).toBe(46);
+            expect(result.streakFreezes).toBe(1);
+            expect(days.filter((day) => day.frozen)).toHaveLength(1);
+        });
+
+        it('reports both total goal days and total practice days', async () => {
+            days = [
+                {
+                    practiceDate: parseClientDate(yesterday),
+                    wordsPracticed: 3,
+                    goalMet: false,
+                    frozen: false,
+                },
+            ];
+            habitRow = {
+                ...habitAfterRun(yesterday, 1, 0),
+                goalStreak: 0,
+                longestGoalStreak: 0,
+                lastGoalMetDate: null,
+                totalGoalDays: 0,
+                totalPracticeDays: 1,
+            };
+
+            const result = await service.recordPracticeBatch(userLoginId, {
+                days: [{ clientDate: today, wordCount: 10 }],
+                clientDate: today,
+            });
+
+            expect(result.totalPracticeDays).toBe(2);
+            expect(result.totalGoalDays).toBe(1);
+        });
     });
 
     it('rejects a practice day in the future', async () => {

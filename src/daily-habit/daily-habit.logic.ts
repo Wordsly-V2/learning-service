@@ -103,6 +103,97 @@ function dayDelta(a: Date, b: Date): number {
     return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
 
+/** Whole calendar days from a to b, both YYYY-MM-DD. */
+function dayDeltaString(a: string, b: string): number {
+    return dayDelta(parseClientDate(a), parseClientDate(b));
+}
+
+/**
+ * The missed days between the last practice and the day practice resumed, when
+ * banked freezes can pay for all of them. Same rule as resolveDisplayStreak —
+ * a freeze covers exactly one missed day, and a gap wider than the bank isn't
+ * bridged at all (a partial bridge would spend freezes for nothing).
+ *
+ * The returned dates are written to the ledger as frozen days, which is what
+ * makes the bridge survive the next recompute.
+ */
+export function bridgeableGap(params: {
+    lastPracticeDate: string | null;
+    resumeDate: string;
+    streak: number;
+    freezes: number;
+}): { dates: string[]; freezesConsumed: number } {
+    const { lastPracticeDate, resumeDate, streak, freezes } = params;
+    if (!lastPracticeDate || streak <= 0 || freezes <= 0) {
+        return { dates: [], freezesConsumed: 0 };
+    }
+    const missed = dayDeltaString(lastPracticeDate, resumeDate) - 1;
+    if (missed < 1 || missed > freezes) {
+        return { dates: [], freezesConsumed: 0 };
+    }
+    const dates = Array.from({ length: missed }, (_, index) =>
+        addClientDays(lastPracticeDate, index + 1),
+    );
+    return { dates, freezesConsumed: missed };
+}
+
+/**
+ * One-time self-heal for rows written before freeze-bridged gaps were recorded.
+ *
+ * Those rows carry a stored streak the ledger cannot explain (the gap is simply
+ * missing), and the old code papered over it by flooring the recompute against
+ * the stored value — which pinned the streak at its stale number forever. Here
+ * the gaps are materialized instead: walking back from the newest run, each gap
+ * of at most `maxGap` days is marked frozen until the reconstructed run reaches
+ * `storedStreak`. A wider gap stops the walk — that streak was never legitimate.
+ *
+ * @param days Ascending, distinct. Only non-frozen days start/extend a run.
+ */
+export function reconcileFrozenGaps(
+    days: HabitDayPoint[],
+    storedStreak: number,
+    maxGap: number = MAX_STREAK_FREEZES,
+): { dates: string[]; freezesConsumed: number } {
+    if (storedStreak <= 1 || days.length === 0) {
+        return { dates: [], freezesConsumed: 0 };
+    }
+
+    const dates: string[] = [];
+    let run = 0;
+    let previous: string | null = null;
+
+    // Newest first: count back through the current run, bridging gaps as needed.
+    for (
+        let index = days.length - 1;
+        index >= 0 && run < storedStreak;
+        index -= 1
+    ) {
+        const day = days[index];
+        if (previous !== null) {
+            const gap = dayDeltaString(day.date, previous) - 1;
+            if (gap > 0) {
+                if (day.frozen || gap > maxGap) {
+                    break;
+                }
+                for (let offset = 1; offset <= gap; offset += 1) {
+                    dates.push(addClientDays(day.date, offset));
+                }
+            }
+        }
+        if (!day.frozen) {
+            run += 1;
+        }
+        previous = day.date;
+    }
+
+    if (run < storedStreak) {
+        // The ledger can't reach the stored streak even with bridging: the
+        // stored value was inflated, so don't invent days to justify it.
+        return { dates: [], freezesConsumed: 0 };
+    }
+    return { dates, freezesConsumed: dates.length };
+}
+
 /**
  * Effective practice streak for display. Banked freezes bridge missed days
  * (one freeze per missed day) without mutating state — actual consumption
@@ -304,6 +395,8 @@ export interface HabitDayPoint {
     date: string;
     words: number;
     goalMet: boolean;
+    /** Day paid for by a streak freeze: bridges the chain, but isn't practice. */
+    frozen?: boolean;
 }
 
 export interface RecomputedHabit {
@@ -314,10 +407,14 @@ export interface RecomputedHabit {
     goalStreak: number;
     longestGoalStreak: number;
     wordsToday: number;
-    /** max(date) */
+    /** max(date), frozen days excluded */
     lastPracticeDate: string | null;
     /** max(date where goalMet) */
     lastGoalMetDate: string | null;
+    /** Days the goal was met, all history. */
+    totalGoalDays: number;
+    /** Days with real practice, all history (frozen days excluded). */
+    totalPracticeDays: number;
 }
 
 /**
@@ -329,9 +426,11 @@ export interface RecomputedHabit {
  * `nextPracticeStreakWithFreezes` structurally cannot do that (a non-positive day
  * delta is absorbed and the gap stays). Walking the ledger can.
  *
- * Freeze-bridged streaks are deliberately not reconstructed here — which gaps a
- * freeze covered is path-dependent and unbounded. The caller floors the result
- * against the stored values, so a recompute can never take a streak away.
+ * Freeze-bridged streaks ARE reconstructed, because the bridge is in the ledger:
+ * a `frozen` day keeps the chain alive across a gap the user paid a freeze for,
+ * without counting as a practice day itself (45 + 2 frozen + today = 46). A
+ * frozen day never contributes to the goal streak, so returning from a freeze
+ * restarts the 3-/5-day goal run that earns the next freeze.
  *
  * @param days Ascending, distinct, YYYY-MM-DD.
  */
@@ -348,6 +447,8 @@ export function recomputeHabitFromDays(
             wordsToday: 0,
             lastPracticeDate: null,
             lastGoalMetDate: null,
+            totalGoalDays: 0,
+            totalPracticeDays: 0,
         };
     }
 
@@ -358,16 +459,34 @@ export function recomputeHabitFromDays(
     let previousDate: string | null = null;
     let previousGoalDate: string | null = null;
     let lastGoalMetDate: string | null = null;
+    let lastPracticeDate: string | null = null;
+    let totalGoalDays = 0;
+    let totalPracticeDays = 0;
 
     for (const day of days) {
-        runLength =
-            previousDate !== null && addClientDays(previousDate, 1) === day.date
-                ? runLength + 1
-                : 1;
+        const contiguous =
+            previousDate !== null &&
+            addClientDays(previousDate, 1) === day.date;
+
+        if (day.frozen) {
+            // Bridges an existing run; on its own it starts nothing.
+            if (!contiguous || runLength === 0) {
+                runLength = 0;
+                previousDate = null;
+                continue;
+            }
+            previousDate = day.date;
+            continue;
+        }
+
+        runLength = contiguous ? runLength + 1 : 1;
         longestStreak = Math.max(longestStreak, runLength);
         previousDate = day.date;
+        lastPracticeDate = day.date;
+        totalPracticeDays += 1;
 
         if (day.goalMet) {
+            totalGoalDays += 1;
             goalRunLength =
                 previousGoalDate !== null &&
                 addClientDays(previousGoalDate, 1) === day.date
@@ -379,7 +498,6 @@ export function recomputeHabitFromDays(
         }
     }
 
-    const lastPracticeDate = days[days.length - 1].date;
     const yesterday = addClientDays(clientDate, -1);
 
     // Same ±1-day liveness rule the read path uses (effectivePracticeStreak).
@@ -391,9 +509,13 @@ export function recomputeHabitFromDays(
         longestStreak,
         goalStreak: isLive(lastGoalMetDate) ? goalRunLength : 0,
         longestGoalStreak,
-        wordsToday: days.find((day) => day.date === clientDate)?.words ?? 0,
+        wordsToday:
+            days.find((day) => day.date === clientDate && !day.frozen)?.words ??
+            0,
         lastPracticeDate,
         lastGoalMetDate,
+        totalGoalDays,
+        totalPracticeDays,
     };
 }
 
@@ -403,7 +525,10 @@ export function mergePracticeDays(
 ): { clientDate: string; wordCount: number }[] {
     const byDate = new Map<string, number>();
     for (const day of days) {
-        byDate.set(day.clientDate, (byDate.get(day.clientDate) ?? 0) + day.wordCount);
+        byDate.set(
+            day.clientDate,
+            (byDate.get(day.clientDate) ?? 0) + day.wordCount,
+        );
     }
     return [...byDate.entries()]
         .map(([clientDate, wordCount]) => ({ clientDate, wordCount }))
