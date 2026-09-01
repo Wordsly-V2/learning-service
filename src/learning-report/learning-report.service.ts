@@ -38,8 +38,9 @@ export class LearningReportService {
         userLoginId: string,
         period: ReportPeriod,
         clientDate: string,
+        offset = 0,
     ): Promise<LearningReportResponseDto> {
-        const range = buildReportRange(period, clientDate);
+        const range = buildReportRange(period, clientDate, offset);
         const start = parseClientDate(range.start);
         const end = parseClientDate(range.end);
 
@@ -216,6 +217,7 @@ export class LearningReportService {
 
         return {
             period: range.period,
+            offset: range.offset,
             granularity: range.granularity,
             range: { start: range.start, end: range.end },
             buckets: bucketList,

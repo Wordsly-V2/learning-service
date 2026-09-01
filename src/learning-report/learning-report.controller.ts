@@ -35,7 +35,7 @@ export class LearningReportController {
     @ApiOperation({
         summary: 'Get the learning progress report',
         description:
-            'Time-bucketed words/accuracy/consistency trends, a mastery snapshot, streaks and achievements for the chosen period (week/month/year).',
+            'Time-bucketed words/accuracy/consistency trends, a mastery snapshot, streaks and achievements for the chosen period (week/month/year). `offset` pages the same-sized window into the past.',
     })
     @ApiResponse({
         status: 200,
@@ -53,6 +53,7 @@ export class LearningReportController {
             userLoginId,
             period,
             clientDate,
+            query.offset ?? 0,
         );
     }
 

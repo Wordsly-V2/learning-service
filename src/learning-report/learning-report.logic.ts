@@ -28,6 +28,8 @@ export interface BucketDef {
 
 export interface ReportRange {
     period: ReportPeriod;
+    /** How many whole periods back from "today" this window sits (0 = current). */
+    offset: number;
     granularity: ReportGranularity;
     start: string;
     end: string;
@@ -49,43 +51,66 @@ export function monthKey(date: string): string {
 
 /**
  * Build the time buckets for a report period, anchored at the client's "today".
- * - week  → last 7 days, one bucket per day
- * - month → last 30 days, one bucket per day
- * - year  → last 12 calendar months, one bucket per month
+ * - week  → 7 days, one bucket per day
+ * - month → 30 days, one bucket per day
+ * - year  → 12 calendar months, one bucket per month
+ *
+ * `offset` walks the same-sized window into the past: 0 is the window ending
+ * today, 1 the whole window before that, and so on. Past windows end on their
+ * own last day (the day before the next window starts), so consecutive offsets
+ * tile the timeline without overlapping or skipping days.
+ *
  * Buckets are pre-seeded so empty days/months render as zeros (no gaps).
  */
 export function buildReportRange(
     period: ReportPeriod,
     clientDate: string,
+    offset = 0,
 ): ReportRange {
+    const back = Math.max(0, Math.trunc(offset));
+
     if (period === 'year') {
-        const endMonth = startOfMonthUTC(parseClientDate(clientDate));
+        const endMonth = addMonthsUTC(
+            startOfMonthUTC(parseClientDate(clientDate)),
+            -YEAR_MONTHS * back,
+        );
         const buckets: BucketDef[] = [];
         for (let i = YEAR_MONTHS - 1; i >= 0; i--) {
             const monthStart = addMonthsUTC(endMonth, -i);
             const start = formatClientDate(monthStart);
             buckets.push({ key: monthKey(start), start });
         }
+        // The current window stops at today; past ones run to their last day.
+        const end =
+            back === 0
+                ? clientDate
+                : addClientDays(
+                      formatClientDate(addMonthsUTC(endMonth, 1)),
+                      -1,
+                  );
         return {
             period,
+            offset: back,
             granularity: 'month',
             start: buckets[0].start,
-            end: clientDate,
+            end,
             buckets,
         };
     }
 
     const days = period === 'week' ? WEEK_DAYS : MONTH_DAYS;
-    const start = addClientDays(clientDate, -(days - 1));
+    const end = addClientDays(clientDate, -days * back);
+    const start = addClientDays(end, -(days - 1));
     const buckets: BucketDef[] = Array.from({ length: days }, (_, i) => {
         const date = addClientDays(start, i);
         return { key: date, start: date };
     });
     return {
         period,
+        offset: back,
         granularity: 'day',
         start,
-        end: clientDate,
+        end,
         buckets,
     };
 }

@@ -25,6 +25,45 @@ describe('buildReportRange', () => {
         expect(range.buckets.at(-1)?.key).toBe('2026-06-23');
     });
 
+    it('steps a whole week back for offset 1', () => {
+        const range = buildReportRange('week', '2026-06-23', 1);
+        expect(range.offset).toBe(1);
+        expect(range.start).toBe('2026-06-10');
+        expect(range.end).toBe('2026-06-16');
+        expect(range.buckets).toHaveLength(7);
+    });
+
+    it('tiles consecutive week windows without gaps or overlap', () => {
+        const current = buildReportRange('week', '2026-06-23');
+        const previous = buildReportRange('week', '2026-06-23', 1);
+        expect(previous.end).toBe('2026-06-16');
+        expect(current.start).toBe('2026-06-17');
+    });
+
+    it('steps a whole 30-day window back for offset 2', () => {
+        const range = buildReportRange('month', '2026-06-23', 2);
+        expect(range.end).toBe('2026-04-24');
+        expect(range.start).toBe('2026-03-26');
+        expect(range.buckets).toHaveLength(30);
+    });
+
+    it('ends a past year window on its last calendar day', () => {
+        const range = buildReportRange('year', '2026-06-23', 1);
+        expect(range.buckets[0].key).toBe('2024-07');
+        expect(range.buckets.at(-1)?.key).toBe('2025-06');
+        expect(range.start).toBe('2024-07-01');
+        expect(range.end).toBe('2025-06-30');
+    });
+
+    it('treats a negative or fractional offset as the current window', () => {
+        expect(buildReportRange('week', '2026-06-23', -3).end).toBe(
+            '2026-06-23',
+        );
+        expect(buildReportRange('week', '2026-06-23', 1.9).end).toBe(
+            '2026-06-16',
+        );
+    });
+
     it('builds 12 monthly buckets for the year period', () => {
         const range = buildReportRange('year', '2026-06-23');
         expect(range.granularity).toBe('month');
