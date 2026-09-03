@@ -3,6 +3,7 @@ import { PrismaModule } from '@/prisma/prisma.module';
 import { UserLevelModule } from '@/user-level/user-level.module';
 import { LearningSettingsModule } from '@/learning-settings/learning-settings.module';
 import { SyncModule } from '@/sync/sync.module';
+import { WordScopeModule } from '@/word-scope/word-scope.module';
 import { WordProgressConsumer } from './word-progress.consumer';
 import { WordProgressController } from './word-progress.controller';
 import { WordProgressService } from './word-progress.service';
@@ -13,6 +14,7 @@ import { WordProgressService } from './word-progress.service';
         UserLevelModule,
         LearningSettingsModule,
         SyncModule,
+        WordScopeModule,
     ],
     controllers: [WordProgressController, WordProgressConsumer],
     providers: [WordProgressService],

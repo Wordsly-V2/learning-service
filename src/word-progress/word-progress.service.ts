@@ -462,7 +462,10 @@ export class WordProgressService {
                     }
                     finalByWordId.set(answer.wordId, wordProgress);
 
-                    const delta = getOrInitDelta(deltaByDate, answer.reviewDate);
+                    const delta = getOrInitDelta(
+                        deltaByDate,
+                        answer.reviewDate,
+                    );
                     delta.reviews++;
                     if (
                         answer.quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY
@@ -551,7 +554,9 @@ export class WordProgressService {
         query: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
         const {
-            wordIds,
+            // The controller resolves the scope before calling, so a list is
+            // always present in practice; the default keeps the type honest.
+            wordIds = [],
             limit = 20,
             newLimit,
             includeNew = true,

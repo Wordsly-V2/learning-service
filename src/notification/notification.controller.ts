@@ -1,4 +1,3 @@
-import { InternalServiceGuard } from '@/guard/internal-service/internal-service.guard';
 import {
     Body,
     Controller,
@@ -8,8 +7,7 @@ import {
     ParseUUIDPipe,
     Patch,
     Post,
-    UseGuards,
-} from '@nestjs/common';
+    } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     NotificationPreferencesResponseDto,
@@ -23,9 +21,20 @@ import { PushSenderService } from './push-sender.service';
 @ApiTags('users/:userLoginId/notifications')
 @Controller('users/:userLoginId/notifications')
 @ApiParam({ name: 'userLoginId', description: 'User login ID' })
-@UseGuards(InternalServiceGuard)
 export class NotificationController {
-    constructor(private readonly notificationService: NotificationService) {}
+    constructor(
+        private readonly notificationService: NotificationService,
+        private readonly pushSender: PushSenderService,
+    ) {}
+
+    // Lives on the user-scoped path rather than a bare `/notifications/...`
+    // one: the gateway only routes `/users/*/notifications**` here, and the
+    // key is only ever fetched by a signed-in client about to subscribe.
+    @Get('vapid-public-key')
+    @ApiOperation({ summary: 'Get the VAPID public key for push subscription' })
+    getVapidPublicKey(): { publicKey: string | null } {
+        return { publicKey: this.pushSender.publicKey ?? null };
+    }
 
     @Post('subscriptions')
     @ApiOperation({ summary: 'Register a web push subscription' })
@@ -64,18 +73,5 @@ export class NotificationController {
         @Body() body: UpdatePreferencesDto,
     ): Promise<NotificationPreferencesResponseDto> {
         return this.notificationService.updatePreferences(userLoginId, body);
-    }
-}
-
-@ApiTags('notifications')
-@Controller('notifications')
-@UseGuards(InternalServiceGuard)
-export class NotificationPublicController {
-    constructor(private readonly pushSender: PushSenderService) {}
-
-    @Get('vapid-public-key')
-    @ApiOperation({ summary: 'Get the VAPID public key for push subscription' })
-    getVapidPublicKey(): { publicKey: string | null } {
-        return { publicKey: this.pushSender.publicKey ?? null };
     }
 }

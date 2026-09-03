@@ -1,4 +1,3 @@
-import { InternalServiceGuard } from '@/guard/internal-service/internal-service.guard';
 import {
     Body,
     Controller,
@@ -7,7 +6,6 @@ import {
     Param,
     ParseUUIDPipe,
     Post,
-    UseGuards,
 } from '@nestjs/common';
 import {
     ApiBody,
@@ -31,6 +29,11 @@ import {
     WordProgressResponseDto,
     WordProgressStatsDto,
 } from './dto/word-progress.dto';
+import {
+    StatsByCourseIdsDto,
+    StatsByLessonIdsDto,
+} from './dto/word-progress.dto';
+import { WordScopeService } from '@/word-scope/word-scope.service';
 import { WordProgressService } from './word-progress.service';
 
 @ApiTags('users/:userLoginId/word-progress')
@@ -40,9 +43,32 @@ import { WordProgressService } from './word-progress.service';
     description: 'User login ID',
     example: '01936c1e-1234-7890-abcd-ef1234567890',
 })
-@UseGuards(InternalServiceGuard)
 export class WordProgressController {
-    constructor(private readonly wordProgressService: WordProgressService) {}
+    constructor(
+        private readonly wordProgressService: WordProgressService,
+        private readonly wordScopeService: WordScopeService,
+    ) {}
+
+    /**
+     * The word ids a request applies to.
+     *
+     * Callers may either list the ids outright or name a course/lesson and have
+     * the scope resolved from vocabulary-service. An explicit list always wins:
+     * the offline client already holds its own word ids and must not have them
+     * silently replaced by a server-side lookup.
+     */
+    private async resolveWordIds(
+        userLoginId: string,
+        body: { wordIds?: string[]; courseId?: string; lessonId?: string },
+    ): Promise<string[]> {
+        if (body.wordIds) return body.wordIds;
+
+        return this.wordScopeService.getScopedWordIds(
+            userLoginId,
+            body.courseId,
+            body.lessonId,
+        );
+    }
 
     @Post('record-answer')
     @ApiOperation({
@@ -101,7 +127,11 @@ export class WordProgressController {
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
-        return this.wordProgressService.getDueWordIds(userLoginId, body);
+        const wordIds = await this.resolveWordIds(userLoginId, body);
+        return this.wordProgressService.getDueWordIds(userLoginId, {
+            ...body,
+            wordIds,
+        });
     }
 
     @Post('leeches')
@@ -116,7 +146,8 @@ export class WordProgressController {
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: LeechWordIdsDto,
     ): Promise<LeechesResponseDto> {
-        return this.wordProgressService.getLeeches(userLoginId, body.wordIds);
+        const wordIds = await this.resolveWordIds(userLoginId, body);
+        return this.wordProgressService.getLeeches(userLoginId, wordIds);
     }
 
     @Post('words/:wordId/unsuspend')
@@ -155,6 +186,52 @@ export class WordProgressController {
         return Object.fromEntries(statsMap);
     }
 
+    @Post('stats/by-course-ids')
+    @ApiOperation({
+        summary: 'Get progress stats keyed by course ID',
+        description:
+            'Resolves each course to its word IDs, then computes stats per course in one pass.',
+    })
+    @ApiBody({ type: StatsByCourseIdsDto })
+    async getProgressStatsByCourseIds(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Body() body: StatsByCourseIdsDto,
+    ): Promise<Record<string, WordProgressStatsDto>> {
+        const grouped = await this.wordScopeService.groupByCourseIds(
+            userLoginId,
+            body.courseIds,
+        );
+        const statsMap =
+            await this.wordProgressService.getProgressStatsMapByScopes(
+                userLoginId,
+                this.wordScopeService.toScopes(body.courseIds, grouped),
+            );
+        return Object.fromEntries(statsMap);
+    }
+
+    @Post('stats/by-lesson-ids')
+    @ApiOperation({
+        summary: 'Get progress stats keyed by lesson ID',
+        description:
+            'Resolves each lesson to its word IDs, then computes stats per lesson in one pass.',
+    })
+    @ApiBody({ type: StatsByLessonIdsDto })
+    async getProgressStatsByLessonIds(
+        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @Body() body: StatsByLessonIdsDto,
+    ): Promise<Record<string, WordProgressStatsDto>> {
+        const grouped = await this.wordScopeService.groupByLessonIds(
+            userLoginId,
+            body.lessonIds,
+        );
+        const statsMap =
+            await this.wordProgressService.getProgressStatsMapByScopes(
+                userLoginId,
+                this.wordScopeService.toScopes(body.lessonIds, grouped),
+            );
+        return Object.fromEntries(statsMap);
+    }
+
     @Post('by-word-ids')
     @ApiOperation({
         summary: 'Get progress keyed by word ID',
@@ -186,10 +263,8 @@ export class WordProgressController {
         @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
         @Body() body: StatsByWordIdsDto,
     ): Promise<WordProgressStatsDto> {
-        return this.wordProgressService.getProgressStats(
-            userLoginId,
-            body.wordIds,
-        );
+        const wordIds = await this.resolveWordIds(userLoginId, body);
+        return this.wordProgressService.getProgressStats(userLoginId, wordIds);
     }
 
     @Get('words/:wordId')

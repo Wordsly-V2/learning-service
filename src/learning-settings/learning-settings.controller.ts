@@ -1,4 +1,3 @@
-import { InternalServiceGuard } from '@/guard/internal-service/internal-service.guard';
 import {
     Body,
     Controller,
@@ -6,8 +5,7 @@ import {
     Param,
     ParseUUIDPipe,
     Patch,
-    UseGuards,
-} from '@nestjs/common';
+    } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     LearningSettingsResponseDto,
@@ -22,7 +20,6 @@ import { LearningSettingsService } from './learning-settings.service';
     description: 'User login ID',
     example: '01936c1e-1234-7890-abcd-ef1234567890',
 })
-@UseGuards(InternalServiceGuard)
 export class LearningSettingsController {
     constructor(
         private readonly learningSettingsService: LearningSettingsService,

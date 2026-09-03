@@ -1,4 +1,3 @@
-import { InternalServiceGuard } from '@/guard/internal-service/internal-service.guard';
 import {
     Body,
     Controller,
@@ -8,8 +7,7 @@ import {
     Patch,
     Post,
     Query,
-    UseGuards,
-} from '@nestjs/common';
+    } from '@nestjs/common';
 import {
     ApiBody,
     ApiOperation,
@@ -33,7 +31,6 @@ import { DailyHabitService } from './daily-habit.service';
     description: 'User login ID',
     example: '01936c1e-1234-7890-abcd-ef1234567890',
 })
-@UseGuards(InternalServiceGuard)
 export class DailyHabitController {
     constructor(private readonly dailyHabitService: DailyHabitService) {}
 

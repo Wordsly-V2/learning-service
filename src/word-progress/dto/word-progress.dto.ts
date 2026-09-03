@@ -146,13 +146,31 @@ export class BulkRecordAnswersDto {
 }
 
 export class GetDueWordIdsDto {
-    @ApiProperty({
-        description: 'Word IDs in scope (caller-defined order for new words)',
+    @ApiPropertyOptional({
+        description:
+            'Word IDs in scope (caller-defined order for new words). Omit and pass courseId/lessonId instead to have the scope resolved server-side.',
         type: [String],
     })
+    @IsOptional()
     @IsArray()
     @IsUUID(undefined, { each: true })
-    wordIds: string[];
+    wordIds?: string[];
+
+    @ApiPropertyOptional({
+        description:
+            'Resolve the scope from a course instead of listing word IDs. Ignored when wordIds is given.',
+    })
+    @IsOptional()
+    @IsUUID()
+    courseId?: string;
+
+    @ApiPropertyOptional({
+        description:
+            'Resolve the scope from a lesson instead of listing word IDs. Ignored when wordIds is given.',
+    })
+    @IsOptional()
+    @IsUUID()
+    lessonId?: string;
 
     @ApiPropertyOptional({
         description: 'Maximum number of words to return',
@@ -393,13 +411,25 @@ export class DueWordIdsResponseDto {
 }
 
 export class LeechWordIdsDto {
-    @ApiProperty({
-        description: 'Word IDs in scope to check for leeches',
+    @ApiPropertyOptional({
+        description:
+            'Word IDs in scope to check for leeches. Omit and pass courseId/lessonId instead to have the scope resolved server-side.',
         type: [String],
     })
+    @IsOptional()
     @IsArray()
     @IsUUID(undefined, { each: true })
-    wordIds: string[];
+    wordIds?: string[];
+
+    @ApiPropertyOptional({ description: 'Resolve the scope from a course.' })
+    @IsOptional()
+    @IsUUID()
+    courseId?: string;
+
+    @ApiPropertyOptional({ description: 'Resolve the scope from a lesson.' })
+    @IsOptional()
+    @IsUUID()
+    lessonId?: string;
 }
 
 export class LeechItemDto {
@@ -501,13 +531,25 @@ export class BulkResetProgressDto {
 }
 
 export class StatsByWordIdsDto {
-    @ApiProperty({
-        description: 'Word IDs to compute progress stats for',
+    @ApiPropertyOptional({
+        description:
+            'Word IDs to compute progress stats for. Omit and pass courseId/lessonId instead to have the scope resolved server-side.',
         type: [String],
     })
+    @IsOptional()
     @IsArray()
     @IsUUID(undefined, { each: true })
-    wordIds: string[];
+    wordIds?: string[];
+
+    @ApiPropertyOptional({ description: 'Resolve the scope from a course.' })
+    @IsOptional()
+    @IsUUID()
+    courseId?: string;
+
+    @ApiPropertyOptional({ description: 'Resolve the scope from a lesson.' })
+    @IsOptional()
+    @IsUUID()
+    lessonId?: string;
 }
 
 export class ScopeWordIdsDto {
@@ -546,4 +588,24 @@ export class ByWordIdsDto {
     @IsArray()
     @IsUUID(undefined, { each: true })
     wordIds: string[];
+}
+
+export class StatsByCourseIdsDto {
+    @ApiProperty({
+        description: 'Course IDs to compute stats for',
+        type: [String],
+    })
+    @IsArray()
+    @IsUUID(undefined, { each: true })
+    courseIds: string[];
+}
+
+export class StatsByLessonIdsDto {
+    @ApiProperty({
+        description: 'Lesson IDs to compute stats for',
+        type: [String],
+    })
+    @IsArray()
+    @IsUUID(undefined, { each: true })
+    lessonIds: string[];
 }

@@ -1,12 +1,10 @@
-import { InternalServiceGuard } from '@/guard/internal-service/internal-service.guard';
 import {
     Controller,
     Get,
     Param,
     ParseUUIDPipe,
     Query,
-    UseGuards,
-} from '@nestjs/common';
+    } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     ActivityCalendarQueryDto,
@@ -25,7 +23,6 @@ import { LearningReportService } from './learning-report.service';
     description: 'User login ID',
     example: '01936c1e-1234-7890-abcd-ef1234567890',
 })
-@UseGuards(InternalServiceGuard)
 export class LearningReportController {
     constructor(
         private readonly learningReportService: LearningReportService,
