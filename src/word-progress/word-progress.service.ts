@@ -306,7 +306,7 @@ export class WordProgressService {
     }
 
     async recordAnswer(
-        recordAnswerDto: RecordAnswerDto,
+        recordAnswerDto: RecordAnswerDto & { userLoginId: string },
     ): Promise<WordProgressResponseDto> {
         const { wordId, quality, userLoginId, clientDate } = recordAnswerDto;
         const now = new Date();

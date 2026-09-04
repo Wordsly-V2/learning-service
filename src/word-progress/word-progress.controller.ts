@@ -35,14 +35,10 @@ import {
 } from './dto/word-progress.dto';
 import { WordScopeService } from '@/word-scope/word-scope.service';
 import { WordProgressService } from './word-progress.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/word-progress')
-@Controller('users/:userLoginId/word-progress')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('word-progress')
+@Controller('word-progress')
 export class WordProgressController {
     constructor(
         private readonly wordProgressService: WordProgressService,
@@ -57,14 +53,14 @@ export class WordProgressController {
      * the offline client already holds its own word ids and must not have them
      * silently replaced by a server-side lookup.
      */
-    private async resolveWordIds(
-        userLoginId: string,
-        body: { wordIds?: string[]; courseId?: string; lessonId?: string },
-    ): Promise<string[]> {
+    private async resolveWordIds(body: {
+        wordIds?: string[];
+        courseId?: string;
+        lessonId?: string;
+    }): Promise<string[]> {
         if (body.wordIds) return body.wordIds;
 
         return this.wordScopeService.getScopedWordIds(
-            userLoginId,
             body.courseId,
             body.lessonId,
         );
@@ -83,9 +79,12 @@ export class WordProgressController {
         type: WordProgressResponseDto,
     })
     async recordAnswer(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() recordAnswerDto: RecordAnswerDto,
     ): Promise<WordProgressResponseDto> {
+        // The id is spread in last and comes from the token. The DTO no longer
+        // declares one, so a body that supplies it is stripped by the global
+        // whitelisting ValidationPipe before this handler ever runs.
         return this.wordProgressService.recordAnswer({
             ...recordAnswerDto,
             userLoginId,
@@ -105,7 +104,7 @@ export class WordProgressController {
         type: BulkRecordAnswersResponseDto,
     })
     async recordAnswersBulkSync(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
         return this.wordProgressService.recordAnswersBulk(userLoginId, body);
@@ -124,10 +123,10 @@ export class WordProgressController {
         type: DueWordIdsResponseDto,
     })
     async getDueWordIds(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
-        const wordIds = await this.resolveWordIds(userLoginId, body);
+        const wordIds = await this.resolveWordIds(body);
         return this.wordProgressService.getDueWordIds(userLoginId, {
             ...body,
             wordIds,
@@ -143,10 +142,10 @@ export class WordProgressController {
     @ApiBody({ type: LeechWordIdsDto })
     @ApiResponse({ status: 200, type: LeechesResponseDto })
     async getLeeches(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: LeechWordIdsDto,
     ): Promise<LeechesResponseDto> {
-        const wordIds = await this.resolveWordIds(userLoginId, body);
+        const wordIds = await this.resolveWordIds(body);
         return this.wordProgressService.getLeeches(userLoginId, wordIds);
     }
 
@@ -160,7 +159,7 @@ export class WordProgressController {
         example: '01936b3e-7c8f-7890-abcd-ef1234567890',
     })
     async unsuspendWord(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Param('wordId', new ParseUUIDPipe()) wordId: string,
     ): Promise<{ success: boolean }> {
         await this.wordProgressService.unsuspendWord(userLoginId, wordId);
@@ -175,7 +174,7 @@ export class WordProgressController {
     })
     @ApiBody({ type: StatsByScopesDto })
     async getProgressStatsByScopes(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: StatsByScopesDto,
     ): Promise<Record<string, WordProgressStatsDto>> {
         const statsMap =
@@ -194,11 +193,10 @@ export class WordProgressController {
     })
     @ApiBody({ type: StatsByCourseIdsDto })
     async getProgressStatsByCourseIds(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: StatsByCourseIdsDto,
     ): Promise<Record<string, WordProgressStatsDto>> {
         const grouped = await this.wordScopeService.groupByCourseIds(
-            userLoginId,
             body.courseIds,
         );
         const statsMap =
@@ -217,11 +215,10 @@ export class WordProgressController {
     })
     @ApiBody({ type: StatsByLessonIdsDto })
     async getProgressStatsByLessonIds(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: StatsByLessonIdsDto,
     ): Promise<Record<string, WordProgressStatsDto>> {
         const grouped = await this.wordScopeService.groupByLessonIds(
-            userLoginId,
             body.lessonIds,
         );
         const statsMap =
@@ -238,7 +235,7 @@ export class WordProgressController {
     })
     @ApiBody({ type: ByWordIdsDto })
     async getProgressByWordIds(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: ByWordIdsDto,
     ): Promise<Record<string, WordProgressResponseDto | null>> {
         const progressMap =
@@ -260,10 +257,10 @@ export class WordProgressController {
         type: WordProgressStatsDto,
     })
     async getProgressStats(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: StatsByWordIdsDto,
     ): Promise<WordProgressStatsDto> {
-        const wordIds = await this.resolveWordIds(userLoginId, body);
+        const wordIds = await this.resolveWordIds(body);
         return this.wordProgressService.getProgressStats(userLoginId, wordIds);
     }
 
@@ -282,7 +279,7 @@ export class WordProgressController {
         type: WordProgressResponseDto,
     })
     async getWordProgress(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Param('wordId') wordId: string,
     ): Promise<WordProgressResponseDto | null> {
         return this.wordProgressService.getWordProgress(userLoginId, wordId);
@@ -294,7 +291,7 @@ export class WordProgressController {
     })
     @ApiBody({ type: BulkResetProgressDto })
     async resetProgressBulk(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: BulkResetProgressDto,
     ): Promise<{ count: number }> {
         return this.wordProgressService.resetProgressBulk(
@@ -313,7 +310,7 @@ export class WordProgressController {
         example: '01936b3e-7c8f-7890-abcd-ef1234567890',
     })
     async resetProgress(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Param('wordId', new ParseUUIDPipe()) wordId: string,
     ): Promise<{ success: boolean }> {
         await this.wordProgressService.resetProgress(userLoginId, wordId);

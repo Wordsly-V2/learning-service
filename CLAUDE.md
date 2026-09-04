@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Wordsly learning-progress microservice (NestJS + Prisma + PostgreSQL, port 3003). Owns spaced-repetition scheduling (FSRS), daily habits/streaks, XP/levels, and learning reports. Internal-only: controllers are guarded by `InternalServiceGuard` — only the api-gateway calls in. It stores `wordId`s that belong to vocabulary-service (no cross-DB FK); orphans are cleaned up by consuming Kafka `WORDS_DELETED_TOPIC` (`src/word-progress/word-progress.consumer.ts`).
+Wordsly learning-progress microservice (NestJS + Prisma + PostgreSQL, port 3003). Owns spaced-repetition scheduling (FSRS), daily habits/streaks, XP/levels, and learning reports. Reached through the gateway, which forwards but does not verify. Two global guards in `src/auth/jwt/`: `AccessGuard` (deny-by-default; `@Public()` or a valid RS256 access token) and `UserScopeGuard` (refuses any request that names a user). Routes carry no user segment — handlers take the id from `@CurrentUser()`, i.e. the token's subject.
+
+It stores `wordId`s that belong to vocabulary-service (no cross-DB FK); orphans are cleaned up by consuming Kafka `WORDS_DELETED_TOPIC` (`src/word-progress/word-progress.consumer.ts`).
 
 ## Commands
 
@@ -46,6 +48,14 @@ Config through `src/config/configuration.ts`; env validated at boot. The Kafka m
 Streaks/habits: `recordPractice` delegates to `recordPracticeBatch`, so online and offline share one path. Streaks are **recomputed from the whole `DailyHabitDay` ledger** (`recomputeHabitFromDays`) rather than advanced from a cursor, which is the only way a backdated day can fill a gap. A gap a banked freeze pays for is written into that ledger as `frozen` day rows (`DailyHabitDay.frozen`) before the recompute runs — a frozen day bridges the chain without counting as a practice day, and breaks the goal run so the 3-/5-day freeze thresholds re-arm. The recompute is therefore authoritative for the current streak (only `longest*` is floored against the stored value); do not reintroduce a floor on `streak`, which used to pin it at its stale value forever. `practiceDate`/`wordsToday` always describe the client's today. Per-day consistency XP is ledgered in `DailyHabitGrant` (PK = one-shot guarantee); streak-milestone XP is owned solely by `AchievementService`.
 
 There is **no per-review history table** — only aggregates (`DailyReviewStat`, counters on `WordProgress`). Reports are built from those aggregates; keep new stats incremental, not scan-based (`learning-report.service.ts` is the reference implementation: parallel aggregate queries, bounded row counts).
+
+## Calling vocabulary-service
+
+`WordScopeService` is the only peer dependency at request time, and it forwards **the caller's own access token** — there is no service credential. `src/http-clients/caller-context.ts` holds that token in an `AsyncLocalStorage` store installed by `app.use` in `main.ts`, and the axios request interceptor attaches it.
+
+The consequence to design around: **outside an HTTP request there is nothing to forward**, and the client throws `MissingCallerCredentialError` rather than reaching for something stronger. Cron jobs and Kafka consumers must do their work against this service's own database — which all of them already do.
+
+This replaced a mesh-wide shared secret (`x-service-token`) that satisfied every service's guards for every user id, so one leaked copy could act as any learner anywhere.
 
 ## Other modules
 

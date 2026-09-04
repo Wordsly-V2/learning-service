@@ -12,7 +12,6 @@ import { Reflector } from '@nestjs/core';
 import { jwtVerify } from 'jose';
 import { AuthenticatedRequest } from './authenticated-request';
 import { IS_PUBLIC_KEY } from './public.decorator';
-import { isValidInternalToken } from './internal-token';
 import { JWKS_RESOLVER } from './jwks.provider';
 // `import type` is required: JwksResolver appears in a decorated
 // constructor signature, and emitDecoratorMetadata would otherwise try to
@@ -27,10 +26,11 @@ import type { JwksResolver } from './jwks.provider';
  * verified here, against the auth service's published key set, so the identity
  * is established by cryptography rather than by trusting the caller.
  *
- * Three ways in, in order:
- *   1. `@Public()` — health checks.
- *   2. The internal service token — a peer service, no end-user identity.
- *   3. A valid access token — a browser, identity attached to the request.
+ * Two ways in:
+ *   1. `@Public()` — health checks and the token endpoints.
+ *   2. A valid access token — identity attached to the request for
+ *      `@CurrentUser()` to read. Peer services forward the caller's own token,
+ *      so they arrive here as the user they are acting for, not as a peer.
  */
 @Injectable()
 export class AccessGuard implements CanActivate {
@@ -56,16 +56,6 @@ export class AccessGuard implements CanActivate {
         const request = context
             .switchToHttp()
             .getRequest<AuthenticatedRequest>();
-
-        if (
-            isValidInternalToken(
-                request.headers['x-service-token'] as string | undefined,
-                this.configService.get<string>('internalServiceToServiceToken'),
-            )
-        ) {
-            request.isInternalCall = true;
-            return true;
-        }
 
         const token = readBearerToken(request);
         if (!token) {
@@ -100,7 +90,8 @@ export class AccessGuard implements CanActivate {
                 throw new UnauthorizedException('Expected an access token');
             }
 
-            const sub = payload.sub ?? (payload.userLoginId as string | undefined);
+            const sub =
+                payload.sub ?? (payload.userLoginId as string | undefined);
             if (!sub) {
                 throw new UnauthorizedException('Token has no subject');
             }

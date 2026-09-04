@@ -1,14 +1,5 @@
-import {
-    Body,
-    Controller,
-    Delete,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    Patch,
-    Post,
-    } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Patch, Post } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     NotificationPreferencesResponseDto,
     SubscribeDto,
@@ -17,10 +8,10 @@ import {
 } from './dto/notification.dto';
 import { NotificationService } from './notification.service';
 import { PushSenderService } from './push-sender.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/notifications')
-@Controller('users/:userLoginId/notifications')
-@ApiParam({ name: 'userLoginId', description: 'User login ID' })
+@ApiTags('notifications')
+@Controller('notifications')
 export class NotificationController {
     constructor(
         private readonly notificationService: NotificationService,
@@ -39,7 +30,7 @@ export class NotificationController {
     @Post('subscriptions')
     @ApiOperation({ summary: 'Register a web push subscription' })
     async subscribe(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: SubscribeDto,
     ): Promise<{ success: boolean }> {
         await this.notificationService.subscribe(userLoginId, body);
@@ -49,7 +40,7 @@ export class NotificationController {
     @Delete('subscriptions')
     @ApiOperation({ summary: 'Remove a web push subscription' })
     async unsubscribe(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: UnsubscribeDto,
     ): Promise<{ success: boolean }> {
         await this.notificationService.unsubscribe(userLoginId, body.endpoint);
@@ -60,7 +51,7 @@ export class NotificationController {
     @ApiOperation({ summary: 'Get notification preferences' })
     @ApiResponse({ status: 200, type: NotificationPreferencesResponseDto })
     async getPreferences(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
     ): Promise<NotificationPreferencesResponseDto> {
         return this.notificationService.getPreferences(userLoginId);
     }
@@ -69,7 +60,7 @@ export class NotificationController {
     @ApiOperation({ summary: 'Update notification preferences' })
     @ApiResponse({ status: 200, type: NotificationPreferencesResponseDto })
     async updatePreferences(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: UpdatePreferencesDto,
     ): Promise<NotificationPreferencesResponseDto> {
         return this.notificationService.updatePreferences(userLoginId, body);

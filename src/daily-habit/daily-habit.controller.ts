@@ -1,20 +1,5 @@
-import {
-    Body,
-    Controller,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    Patch,
-    Post,
-    Query,
-    } from '@nestjs/common';
-import {
-    ApiBody,
-    ApiOperation,
-    ApiParam,
-    ApiResponse,
-    ApiTags,
-} from '@nestjs/swagger';
+import { Body, Controller, Get, Patch, Post, Query } from '@nestjs/common';
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     BatchRecordDailyPracticeDto,
     DailyHabitQueryDto,
@@ -23,14 +8,10 @@ import {
     UpdateDailyGoalDto,
 } from './dto/daily-habit.dto';
 import { DailyHabitService } from './daily-habit.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/daily-habit')
-@Controller('users/:userLoginId/daily-habit')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('daily-habit')
+@Controller('daily-habit')
 export class DailyHabitController {
     constructor(private readonly dailyHabitService: DailyHabitService) {}
 
@@ -46,7 +27,7 @@ export class DailyHabitController {
         type: DailyHabitResponseDto,
     })
     async getDailyHabit(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Query() query: DailyHabitQueryDto,
     ): Promise<DailyHabitResponseDto> {
         const clientDate =
@@ -67,7 +48,7 @@ export class DailyHabitController {
         type: DailyHabitResponseDto,
     })
     async recordPractice(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: RecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
         return this.dailyHabitService.recordPractice(userLoginId, body);
@@ -86,7 +67,7 @@ export class DailyHabitController {
         type: DailyHabitResponseDto,
     })
     async recordPracticeBatch(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: BatchRecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
         return this.dailyHabitService.recordPracticeBatch(userLoginId, body);
@@ -103,7 +84,7 @@ export class DailyHabitController {
         type: DailyHabitResponseDto,
     })
     async updateDailyGoal(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: UpdateDailyGoalDto,
         @Query() query: DailyHabitQueryDto,
     ): Promise<DailyHabitResponseDto> {

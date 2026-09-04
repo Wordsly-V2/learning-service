@@ -4,7 +4,6 @@
  * instead of letting the service run with missing/insecure defaults.
  */
 const REQUIRED_ENV_VARS = [
-    'INTERNAL_SERVICE_TO_SERVICE_TOKEN',
     'AUTH_JWKS_URI',
     'JWT_ISSUER',
     'VOCABULARY_SERVICE_HOST',

@@ -1,11 +1,5 @@
-import {
-    Controller,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    Query,
-    } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     ActivityCalendarQueryDto,
     ActivityCalendarResponseDto,
@@ -15,14 +9,10 @@ import {
     ReviewForecastResponseDto,
 } from './dto/learning-report.dto';
 import { LearningReportService } from './learning-report.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/learning-report')
-@Controller('users/:userLoginId/learning-report')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('learning-report')
+@Controller('learning-report')
 export class LearningReportController {
     constructor(
         private readonly learningReportService: LearningReportService,
@@ -40,7 +30,7 @@ export class LearningReportController {
         type: LearningReportResponseDto,
     })
     getReport(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Query() query: LearningReportQueryDto,
     ): Promise<LearningReportResponseDto> {
         const period = query.period ?? 'week';
@@ -61,7 +51,7 @@ export class LearningReportController {
     })
     @ApiResponse({ status: 200, type: ReviewForecastResponseDto })
     getForecast(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Query() query: ReviewForecastQueryDto,
     ): Promise<ReviewForecastResponseDto> {
         const days = query.days ?? 7;
@@ -80,7 +70,7 @@ export class LearningReportController {
     })
     @ApiResponse({ status: 200, type: ActivityCalendarResponseDto })
     getActivityCalendar(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Query() query: ActivityCalendarQueryDto,
     ): Promise<ActivityCalendarResponseDto> {
         const clientDate =

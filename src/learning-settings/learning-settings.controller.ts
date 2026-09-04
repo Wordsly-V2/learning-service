@@ -1,25 +1,14 @@
-import {
-    Body,
-    Controller,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    Patch,
-    } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     LearningSettingsResponseDto,
     UpdateLearningSettingsDto,
 } from './dto/learning-settings.dto';
 import { LearningSettingsService } from './learning-settings.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/learning-settings')
-@Controller('users/:userLoginId/learning-settings')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('learning-settings')
+@Controller('learning-settings')
 export class LearningSettingsController {
     constructor(
         private readonly learningSettingsService: LearningSettingsService,
@@ -29,7 +18,7 @@ export class LearningSettingsController {
     @ApiOperation({ summary: 'Get learning pacing/leech settings' })
     @ApiResponse({ status: 200, type: LearningSettingsResponseDto })
     async getSettings(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
     ): Promise<LearningSettingsResponseDto> {
         return this.learningSettingsService.getSettings(userLoginId);
     }
@@ -38,7 +27,7 @@ export class LearningSettingsController {
     @ApiOperation({ summary: 'Update learning pacing/leech settings' })
     @ApiResponse({ status: 200, type: LearningSettingsResponseDto })
     async updateSettings(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: UpdateLearningSettingsDto,
     ): Promise<LearningSettingsResponseDto> {
         return this.learningSettingsService.updateSettings(userLoginId, body);

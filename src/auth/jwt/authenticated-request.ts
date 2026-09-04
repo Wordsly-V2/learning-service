@@ -12,10 +12,4 @@ export interface AuthenticatedUser {
 
 export interface AuthenticatedRequest extends Request {
     user?: AuthenticatedUser;
-    /**
-     * True when the caller presented the internal service token, i.e. it is a
-     * peer service inside the mesh rather than a browser. Such calls carry no
-     * end-user identity, so per-user ownership checks do not apply to them.
-     */
-    isInternalCall?: boolean;
 }

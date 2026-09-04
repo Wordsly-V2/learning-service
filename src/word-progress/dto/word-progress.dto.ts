@@ -40,13 +40,6 @@ export enum AnswerQuality {
 
 export class RecordAnswerDto {
     @ApiProperty({
-        description: 'The login ID of the user',
-        example: '01936b3e-7c8f-7890-abcd-ef1234567890',
-    })
-    @IsUUID()
-    userLoginId: string;
-
-    @ApiProperty({
         description: 'The ID of the word being reviewed',
         example: '01936b3e-7c8f-7890-abcd-ef1234567890',
     })

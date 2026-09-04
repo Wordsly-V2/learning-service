@@ -1,25 +1,14 @@
-import {
-    Body,
-    Controller,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    Patch,
-    } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Patch } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
     UpdateUserPreferencesDto,
     UserPreferencesResponseDto,
 } from './dto/user-preferences.dto';
 import { UserPreferencesService } from './user-preferences.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/preferences')
-@Controller('users/:userLoginId/preferences')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('preferences')
+@Controller('preferences')
 export class UserPreferencesController {
     constructor(
         private readonly userPreferencesService: UserPreferencesService,
@@ -29,7 +18,7 @@ export class UserPreferencesController {
     @ApiOperation({ summary: 'Get synced app/UI preferences' })
     @ApiResponse({ status: 200, type: UserPreferencesResponseDto })
     async getPreferences(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
     ): Promise<UserPreferencesResponseDto> {
         return this.userPreferencesService.getPreferences(userLoginId);
     }
@@ -40,7 +29,7 @@ export class UserPreferencesController {
     })
     @ApiResponse({ status: 200, type: UserPreferencesResponseDto })
     async updatePreferences(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
         @Body() body: UpdateUserPreferencesDto,
     ): Promise<UserPreferencesResponseDto> {
         return this.userPreferencesService.updatePreferences(

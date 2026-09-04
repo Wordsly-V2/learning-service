@@ -1,20 +1,11 @@
-import {
-    Controller,
-    Get,
-    Param,
-    ParseUUIDPipe,
-    } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Controller, Get } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserLevelResponseDto } from './dto/user-level.dto';
 import { UserLevelService } from './user-level.service';
+import { CurrentUser } from '@/auth/jwt/current-user.decorator';
 
-@ApiTags('users/:userLoginId/level')
-@Controller('users/:userLoginId/level')
-@ApiParam({
-    name: 'userLoginId',
-    description: 'User login ID',
-    example: '01936c1e-1234-7890-abcd-ef1234567890',
-})
+@ApiTags('level')
+@Controller('level')
 export class UserLevelController {
     constructor(private readonly userLevelService: UserLevelService) {}
 
@@ -30,7 +21,7 @@ export class UserLevelController {
         type: UserLevelResponseDto,
     })
     async getUserLevel(
-        @Param('userLoginId', new ParseUUIDPipe()) userLoginId: string,
+        @CurrentUser() userLoginId: string,
     ): Promise<UserLevelResponseDto> {
         return this.userLevelService.getUserLevel(userLoginId);
     }
