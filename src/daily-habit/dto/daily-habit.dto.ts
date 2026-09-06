@@ -223,6 +223,14 @@ export class DailyHabitResponseDto {
     })
     streakShielded: boolean;
 
+    @ApiProperty({
+        description:
+            'Consecutive goal-met days still owed for the next freeze, or null while the bank is full. The first freeze of a streak costs 3 such days, every one after it costs 2.',
+        example: 2,
+        nullable: true,
+    })
+    goalDaysUntilNextFreeze: number | null;
+
     @ApiProperty({ example: 'Almost there — 2 more words to hit your goal.' })
     message: string;
 

@@ -15,20 +15,18 @@ import {
     datesEqual,
     formatClientDate,
     parseClientDate,
-    yesterdayClientDate,
 } from './daily-habit-date.util';
 import {
     addClientDays,
     bridgeableGap,
+    FREEZE_FIRST_EARN_GOAL_DAYS,
     effectiveGoalStreak,
-    freezesAfterPractice,
     habitMotivation,
     HabitDayPoint,
     isGoalMet,
     isStreakAtRisk,
     lastNDays,
     mergePracticeDays,
-    nextGoalStreak,
     nextStreakMilestone,
     reconcileFrozenGaps,
     recomputeHabitFromDays,
@@ -71,7 +69,12 @@ export class DailyHabitService {
             where: { userLoginId },
         });
         const recentDays = await this.loadRecentDays(userLoginId, clientDate);
-        return this.toResponse(row, clientDate, recentDays);
+        return this.toResponse(
+            row,
+            clientDate,
+            recentDays,
+            await this.loadFreezeCountdown(userLoginId, clientDate),
+        );
     }
 
     /**
@@ -130,7 +133,12 @@ export class DailyHabitService {
             const row = await this.prisma.dailyHabit.findUnique({
                 where: { userLoginId },
             });
-            return this.toResponse(row, clientToday, recentDays);
+            return this.toResponse(
+                row,
+                clientToday,
+                recentDays,
+                await this.loadFreezeCountdown(userLoginId, clientToday),
+            );
         }
         if (usable.length < merged.length) {
             this.logger.warn('dropped ancient practice days', {
@@ -141,226 +149,226 @@ export class DailyHabitService {
 
         const totalWords = usable.reduce((sum, day) => sum + day.wordCount, 0);
 
-        const { row: updated, unlockedAchievements } =
-            await this.syncRequests.runOnce<{
-                row: DailyHabit;
-                unlockedAchievements: UnlockedAchievementDto[];
-            }>(
-                userLoginId,
-                body.clientRequestId,
-                SYNC_ENDPOINT_HABIT_BATCH,
-                async (tx) => {
-                    // DailyHabitDay has an FK to DailyHabit, so the parent row has
-                    // to exist before any day row.
-                    const existing = await tx.dailyHabit.upsert({
-                        where: { userLoginId },
-                        create: {
-                            userLoginId,
-                            dailyGoal: DAILY_GOAL_WORDS,
-                            practiceDate: today,
-                        },
-                        update: {},
-                    });
-                    const dailyGoal = existing.dailyGoal;
-
-                    const daysBefore = await this.loadLedger(tx, userLoginId);
-                    // The goal streak as it stood BEFORE this batch — the baseline
-                    // freeze earning is measured against. The stored goalStreak
-                    // can't be used: it is stale after a gap, so a threshold
-                    // crossing would never be detected.
-                    const goalStreakBefore = recomputeHabitFromDays(
-                        daysBefore,
-                        clientToday,
-                    ).goalStreak;
-
-                    const freezesConsumed = await this.materializeFrozenDays(
-                        tx,
+        const {
+            row: updated,
+            unlockedAchievements,
+            goalDaysUntilNextFreeze,
+        } = await this.syncRequests.runOnce<{
+            row: DailyHabit;
+            unlockedAchievements: UnlockedAchievementDto[];
+            goalDaysUntilNextFreeze: number | null;
+        }>(
+            userLoginId,
+            body.clientRequestId,
+            SYNC_ENDPOINT_HABIT_BATCH,
+            async (tx) => {
+                // DailyHabitDay has an FK to DailyHabit, so the parent row has
+                // to exist before any day row.
+                const existing = await tx.dailyHabit.upsert({
+                    where: { userLoginId },
+                    create: {
                         userLoginId,
-                        daysBefore,
-                        existing,
-                        usable.map((day) => day.clientDate),
-                    );
+                        dailyGoal: DAILY_GOAL_WORDS,
+                        practiceDate: today,
+                    },
+                    update: {},
+                });
+                const dailyGoal = existing.dailyGoal;
 
-                    // Which of these dates are brand new? Drives totalPracticeDays,
-                    // which stays increment-only. A frozen row is not practice, so
-                    // practicing on one still counts as a new practice day.
-                    const priorDays = await tx.dailyHabitDay.findMany({
+                const daysBefore = await this.loadLedger(tx, userLoginId);
+                // The freeze balance as the ledger explains it BEFORE this
+                // batch — what this session has to spend on a gap. The stored
+                // column is only a cache of this and could have drifted.
+                const freezesBefore = recomputeHabitFromDays(
+                    daysBefore,
+                    clientToday,
+                ).freezes;
+
+                const frozenDates = await this.materializeFrozenDays(
+                    tx,
+                    userLoginId,
+                    daysBefore,
+                    existing,
+                    freezesBefore,
+                    usable.map((day) => day.clientDate),
+                );
+
+                // Which of these dates are brand new? Drives totalPracticeDays,
+                // which stays increment-only. A frozen row is not practice, so
+                // practicing on one still counts as a new practice day.
+                const priorDays = await tx.dailyHabitDay.findMany({
+                    where: {
+                        userLoginId,
+                        practiceDate: {
+                            in: usable.map((day) =>
+                                parseClientDate(day.clientDate),
+                            ),
+                        },
+                    },
+                    select: { practiceDate: true, frozen: true },
+                });
+                const priorDates = new Set(
+                    priorDays
+                        .filter((row) => !row.frozen)
+                        .map((row) => formatClientDate(row.practiceDate)),
+                );
+                const newDayCount = usable.filter(
+                    (day) => !priorDates.has(day.clientDate),
+                ).length;
+
+                for (const day of usable) {
+                    const practiceDate = parseClientDate(day.clientDate);
+                    const dayRow = await tx.dailyHabitDay.upsert({
                         where: {
-                            userLoginId,
-                            practiceDate: {
-                                in: usable.map((day) =>
-                                    parseClientDate(day.clientDate),
-                                ),
+                            userLoginId_practiceDate: {
+                                userLoginId,
+                                practiceDate,
                             },
                         },
-                        select: { practiceDate: true, frozen: true },
+                        create: {
+                            userLoginId,
+                            practiceDate,
+                            wordsPracticed: day.wordCount,
+                            goalMet: isGoalMet(day.wordCount, dailyGoal),
+                        },
+                        update: {
+                            wordsPracticed: { increment: day.wordCount },
+                            // Real practice landed on a day a freeze had
+                            // covered — it is a practice day again.
+                            frozen: false,
+                        },
                     });
-                    const priorDates = new Set(
-                        priorDays
-                            .filter((row) => !row.frozen)
-                            .map((row) => formatClientDate(row.practiceDate)),
-                    );
-                    const newDayCount = usable.filter(
-                        (day) => !priorDates.has(day.clientDate),
-                    ).length;
 
-                    for (const day of usable) {
-                        const practiceDate = parseClientDate(day.clientDate);
-                        const dayRow = await tx.dailyHabitDay.upsert({
+                    const goalMet = isGoalMet(dayRow.wordsPracticed, dailyGoal);
+                    if (dayRow.goalMet !== goalMet) {
+                        await tx.dailyHabitDay.update({
                             where: {
                                 userLoginId_practiceDate: {
                                     userLoginId,
                                     practiceDate,
                                 },
                             },
-                            create: {
-                                userLoginId,
-                                practiceDate,
-                                wordsPracticed: day.wordCount,
-                                goalMet: isGoalMet(day.wordCount, dailyGoal),
-                            },
-                            update: {
-                                wordsPracticed: { increment: day.wordCount },
-                                // Real practice landed on a day a freeze had
-                                // covered — it is a practice day again.
-                                frozen: false,
-                            },
+                            data: { goalMet },
                         });
-
-                        const goalMet = isGoalMet(
-                            dayRow.wordsPracticed,
-                            dailyGoal,
-                        );
-                        if (dayRow.goalMet !== goalMet) {
-                            await tx.dailyHabitDay.update({
-                                where: {
-                                    userLoginId_practiceDate: {
-                                        userLoginId,
-                                        practiceDate,
-                                    },
-                                },
-                                data: { goalMet },
-                            });
-                        }
                     }
+                }
 
-                    const allDays = await this.loadLedger(tx, userLoginId);
-                    const recomputed = recomputeHabitFromDays(
-                        allDays,
+                const allDays = await this.loadLedger(tx, userLoginId);
+                const recomputed = recomputeHabitFromDays(allDays, clientToday);
+
+                // The ledger is authoritative for the current streak: a
+                // freeze-bridged gap is now recorded as frozen days, so the
+                // recompute reconstructs it. Flooring against the stored
+                // streak instead (as this used to) pinned the number at its
+                // stale value — it could never grow again.
+                //
+                // `longest*` never decreasing is still the invariant that
+                // keeps out-of-order ingestion from wrongly skipping an
+                // achievement: totals only ever rise, so a milestone crossed
+                // by a late batch is still detected.
+                const streak = recomputed.streak;
+                const longestStreak = Math.max(
+                    existing.longestStreak,
+                    recomputed.longestStreak,
+                    streak,
+                );
+                const goalStreak = Math.max(
+                    recomputed.goalStreak,
+                    effectiveGoalStreak(
+                        existing.goalStreak,
+                        existing.lastGoalMetDate,
                         clientToday,
-                    );
+                    ),
+                );
+                const longestGoalStreak = Math.max(
+                    existing.longestGoalStreak,
+                    recomputed.longestGoalStreak,
+                    goalStreak,
+                );
 
-                    // The ledger is authoritative for the current streak: a
-                    // freeze-bridged gap is now recorded as frozen days, so the
-                    // recompute reconstructs it. Flooring against the stored
-                    // streak instead (as this used to) pinned the number at its
-                    // stale value — it could never grow again.
-                    //
-                    // `longest*` never decreasing is still the invariant that
-                    // keeps out-of-order ingestion from wrongly skipping an
-                    // achievement: totals only ever rise, so a milestone crossed
-                    // by a late batch is still detected.
-                    const streak = recomputed.streak;
-                    const longestStreak = Math.max(
-                        existing.longestStreak,
-                        recomputed.longestStreak,
+                await this.grantDailyConsistencyXp(
+                    tx,
+                    userLoginId,
+                    usable.map((day) => day.clientDate),
+                    dailyGoal,
+                    allDays,
+                );
+
+                const row = await tx.dailyHabit.update({
+                    where: { userLoginId },
+                    data: {
+                        // From the ledger, so a backdated day can no longer
+                        // overwrite today's count.
+                        wordsToday: recomputed.wordsToday,
+                        // ALWAYS the client's today.
+                        practiceDate: today,
                         streak,
-                    );
-                    const goalStreak = Math.max(
-                        recomputed.goalStreak,
-                        effectiveGoalStreak(
-                            existing.goalStreak,
-                            existing.lastGoalMetDate,
-                            clientToday,
-                        ),
-                    );
-                    const longestGoalStreak = Math.max(
-                        existing.longestGoalStreak,
-                        recomputed.longestGoalStreak,
+                        longestStreak,
                         goalStreak,
-                    );
+                        longestGoalStreak,
+                        lastPracticeDate: recomputed.lastPracticeDate
+                            ? parseClientDate(recomputed.lastPracticeDate)
+                            : null,
+                        lastGoalMetDate: recomputed.lastGoalMetDate
+                            ? parseClientDate(recomputed.lastGoalMetDate)
+                            : null,
+                        // Derived, like the streak: every earn and every
+                        // spend is in the ledger, so the column is a cache of
+                        // the recompute rather than a running total that a
+                        // replayed or backdated flush could drift.
+                        streakFreezes: recomputed.freezes,
+                        totalGoalDays: recomputed.totalGoalDays,
+                        totalWordsPracticed: { increment: totalWords },
+                        ...(newDayCount > 0 && {
+                            totalPracticeDays: { increment: newDayCount },
+                        }),
+                        ...(frozenDates.length > 0 && {
+                            lastFreezeUsedDate: today,
+                        }),
+                    },
+                });
 
-                    await this.grantDailyConsistencyXp(
-                        tx,
-                        userLoginId,
-                        usable.map((day) => day.clientDate),
-                        dailyGoal,
-                        allDays,
-                    );
-
-                    const row = await tx.dailyHabit.update({
-                        where: { userLoginId },
-                        data: {
-                            // From the ledger, so a backdated day can no longer
-                            // overwrite today's count.
-                            wordsToday: recomputed.wordsToday,
-                            // ALWAYS the client's today.
-                            practiceDate: today,
-                            streak,
-                            longestStreak,
-                            goalStreak,
-                            longestGoalStreak,
-                            lastPracticeDate: recomputed.lastPracticeDate
-                                ? parseClientDate(recomputed.lastPracticeDate)
-                                : null,
-                            lastGoalMetDate: recomputed.lastGoalMetDate
-                                ? parseClientDate(recomputed.lastGoalMetDate)
-                                : null,
-                            streakFreezes: freezesAfterPractice({
-                                currentFreezes: existing.streakFreezes,
-                                // Debit whatever the gap this session closed
-                                // actually cost (0 when nothing was bridged).
-                                freezesConsumed,
-                                // Baseline from the ledger, not the stored value:
-                                // after a bridged gap the goal run restarts at 1,
-                                // which is what re-arms the 3-/5-day thresholds.
-                                prevGoalStreak: goalStreakBefore,
-                                newGoalStreak: goalStreak,
-                                goalMetToday: isGoalMet(
-                                    recomputed.wordsToday,
-                                    dailyGoal,
-                                ),
-                            }),
-                            totalGoalDays: recomputed.totalGoalDays,
-                            totalWordsPracticed: { increment: totalWords },
-                            ...(newDayCount > 0 && {
-                                totalPracticeDays: { increment: newDayCount },
-                            }),
-                            ...(freezesConsumed > 0 && {
-                                lastFreezeUsedDate: today,
-                            }),
-                        },
-                    });
-
-                    // After the update so a freeze reward is capped against the
-                    // just-written streakFreezes.
-                    const unlocked =
-                        await this.achievementService.detectAndUnlock(
-                            tx,
-                            userLoginId,
-                            {
-                                longestStreak: row.longestStreak,
-                                totalWordsPracticed: row.totalWordsPracticed,
-                                totalPracticeDays: row.totalPracticeDays,
-                            },
-                        );
-                    return { row, unlockedAchievements: unlocked };
-                },
-            );
+                // After the update so detection sees the just-written
+                // longest streak and totals.
+                const unlocked = await this.achievementService.detectAndUnlock(
+                    tx,
+                    userLoginId,
+                    {
+                        longestStreak: row.longestStreak,
+                        totalWordsPracticed: row.totalWordsPracticed,
+                        totalPracticeDays: row.totalPracticeDays,
+                    },
+                );
+                return {
+                    row,
+                    unlockedAchievements: unlocked,
+                    goalDaysUntilNextFreeze: recomputed.goalDaysUntilNextFreeze,
+                };
+            },
+        );
 
         const recentDays = await this.loadRecentDays(userLoginId, clientToday);
         return {
-            ...this.toResponse(updated, clientToday, recentDays),
+            ...this.toResponse(
+                updated,
+                clientToday,
+                recentDays,
+                goalDaysUntilNextFreeze,
+            ),
             unlockedAchievements,
         };
     }
 
-    /** The whole per-day ledger, ascending, as logic-layer points. */
+    /**
+     * The whole per-day ledger, ascending, as logic-layer points. Takes the
+     * client so it can run inside a write transaction or straight off the pool
+     * on a read path.
+     */
     private async loadLedger(
-        tx: Prisma.TransactionClient,
+        client: Prisma.TransactionClient | PrismaService,
         userLoginId: string,
     ): Promise<HabitDayPoint[]> {
-        const rows = await tx.dailyHabitDay.findMany({
+        const rows = await client.dailyHabitDay.findMany({
             where: { userLoginId },
             select: {
                 practiceDate: true,
@@ -379,13 +387,15 @@ export class DailyHabitService {
     }
 
     /**
-     * Write the freeze-covered days this session is about to bridge, and report
-     * what they cost.
+     * Write the freeze-covered days this session is about to bridge, and return
+     * the dates written.
      *
      * A freeze only ever protected the streak on the read path before — nothing
      * recorded it — so the next recompute lapsed the streak and the balance
      * silently snapped back to full. Recording the bridge as `frozen` day rows
-     * fixes both: the chain survives the recompute, and the freezes are debited.
+     * fixes both: the chain survives the recompute, and — because a frozen day
+     * IS the debit as far as recomputeHabitFromDays is concerned — the balance
+     * falls out of the ledger with no separate bookkeeping.
      *
      * Two gaps can need covering: the one this session is returning across, and
      * (once, for rows written before this existed) an unexplained older gap the
@@ -396,8 +406,9 @@ export class DailyHabitService {
         userLoginId: string,
         daysBefore: HabitDayPoint[],
         existing: DailyHabit,
+        freezesBefore: number,
         batchDates: string[],
-    ): Promise<number> {
+    ): Promise<string[]> {
         const lastPracticeDate = existing.lastPracticeDate
             ? formatClientDate(existing.lastPracticeDate)
             : null;
@@ -419,16 +430,13 @@ export class DailyHabitService {
                   lastPracticeDate,
                   resumeDate,
                   streak: existing.streak,
-                  freezes: Math.max(
-                      0,
-                      existing.streakFreezes - repair.freezesConsumed,
-                  ),
+                  freezes: Math.max(0, freezesBefore - repair.freezesConsumed),
               })
             : { dates: [], freezesConsumed: 0 };
 
         const dates = [...repair.dates, ...gap.dates];
         if (dates.length === 0) {
-            return 0;
+            return [];
         }
 
         await tx.dailyHabitDay.createMany({
@@ -442,11 +450,7 @@ export class DailyHabitService {
             skipDuplicates: true,
         });
 
-        // Never debit more than the user actually banked.
-        return Math.min(
-            existing.streakFreezes,
-            repair.freezesConsumed + gap.freezesConsumed,
-        );
+        return dates;
     }
 
     /**
@@ -573,53 +577,65 @@ export class DailyHabitService {
                 });
             }
 
-            const yesterday = parseClientDate(yesterdayClientDate(clientDate));
-            const goalUpdate = nextGoalStreak(
-                row.goalStreak,
-                row.lastGoalMetDate,
-                today,
-                yesterday,
-                goalMet,
+            // A new goal flips today's goalMet, which can create or destroy a
+            // freeze earn and shift the goal streak, so everything derived is
+            // re-read from the ledger — the same authority the practice path
+            // uses. Historical days keep the goalMet they were stored with;
+            // raising the goal does not rewrite the past.
+            const recomputed = recomputeHabitFromDays(
+                await this.loadLedger(this.prisma, userLoginId),
+                clientDate,
             );
-            const longestGoalStreak = Math.max(
-                row.longestGoalStreak,
-                goalUpdate.goalStreak,
-            );
-
-            const streakFreezes = freezesAfterPractice({
-                currentFreezes: row.streakFreezes,
-                freezesConsumed: 0,
-                prevGoalStreak: row.goalStreak,
-                newGoalStreak: goalUpdate.goalStreak,
-                goalMetToday: goalMet,
-            });
-
-            // A new goal can flip today's goalMet either way, so the total is
-            // re-derived rather than incremented.
-            const totalGoalDays = await this.prisma.dailyHabitDay.count({
-                where: { userLoginId, goalMet: true },
-            });
 
             const updated = await this.prisma.dailyHabit.update({
                 where: { userLoginId },
                 data: {
                     dailyGoal: body.dailyGoal,
-                    goalStreak: goalUpdate.goalStreak,
-                    longestGoalStreak,
-                    lastGoalMetDate: goalUpdate.lastGoalMetDate,
-                    streakFreezes,
-                    totalGoalDays,
+                    goalStreak: recomputed.goalStreak,
+                    longestGoalStreak: Math.max(
+                        row.longestGoalStreak,
+                        recomputed.longestGoalStreak,
+                    ),
+                    lastGoalMetDate: recomputed.lastGoalMetDate
+                        ? parseClientDate(recomputed.lastGoalMetDate)
+                        : null,
+                    streakFreezes: recomputed.freezes,
+                    totalGoalDays: recomputed.totalGoalDays,
                 },
             });
             const recentDays = await this.loadRecentDays(
                 userLoginId,
                 clientDate,
             );
-            return this.toResponse(updated, clientDate, recentDays);
+            return this.toResponse(
+                updated,
+                clientDate,
+                recentDays,
+                recomputed.goalDaysUntilNextFreeze,
+            );
         }
 
         const recentDays = await this.loadRecentDays(userLoginId, clientDate);
-        return this.toResponse(row, clientDate, recentDays);
+        return this.toResponse(
+            row,
+            clientDate,
+            recentDays,
+            await this.loadFreezeCountdown(userLoginId, clientDate),
+        );
+    }
+
+    /**
+     * Goal-met days still owed for the next freeze, for paths that have not
+     * already recomputed. The stored row cannot answer it, and the 7-day
+     * `recentDays` window is too narrow to place the user in the cadence, so
+     * this reads the ledger.
+     */
+    private async loadFreezeCountdown(
+        userLoginId: string,
+        clientDate: string,
+    ): Promise<number | null> {
+        const days = await this.loadLedger(this.prisma, userLoginId);
+        return recomputeHabitFromDays(days, clientDate).goalDaysUntilNextFreeze;
     }
 
     private async loadRecentDays(
@@ -652,10 +668,16 @@ export class DailyHabitService {
         });
     }
 
+    /**
+     * @param goalDaysUntilNextFreeze From the ledger recompute the caller already
+     * ran. The stored row cannot answer it — where the user sits in the earn
+     * cadence is only knowable from the day history.
+     */
     private toResponse(
         row: DailyHabitRow | null,
         clientDate: string,
         recentDays: DailyHabitDayDto[],
+        goalDaysUntilNextFreeze: number | null,
     ): DailyHabitResponseDto {
         const today = parseClientDate(clientDate);
         const goal = row?.dailyGoal ?? DAILY_GOAL_WORDS;
@@ -718,6 +740,7 @@ export class DailyHabitService {
             nextMilestone: nextStreakMilestone(displayStreak),
             streakFreezes: freezesRemaining,
             streakShielded,
+            goalDaysUntilNextFreeze,
             message: habitMotivation({
                 goalMetToday,
                 wordsToday,
@@ -756,6 +779,7 @@ export class DailyHabitService {
             nextMilestone: nextStreakMilestone(0),
             streakFreezes: 0,
             streakShielded: false,
+            goalDaysUntilNextFreeze: FREEZE_FIRST_EARN_GOAL_DAYS,
             message: habitMotivation({
                 goalMetToday: false,
                 wordsToday: 0,

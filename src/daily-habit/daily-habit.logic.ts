@@ -91,10 +91,15 @@ export function isStreakMilestone(streak: number): boolean {
 }
 
 /**
- * Goal-streak lengths that each earn one streak freeze: the first after a
- * 3-day goal streak, the last after a 5-day goal streak.
+ * Consecutive goal-met days that earn the FIRST freeze of a practice run.
  */
-export const FREEZE_EARN_GOAL_STREAKS = [3, 5] as const;
+export const FREEZE_FIRST_EARN_GOAL_DAYS = 3;
+/**
+ * Consecutive goal-met days that earn every freeze after that one, for as long
+ * as the practice run survives — a freeze-bridged missed day keeps the run
+ * alive, so refilling a spent freeze costs 2 days, not another 3.
+ */
+export const FREEZE_REPEAT_EARN_GOAL_DAYS = 2;
 /** Most freezes a user can bank at once. */
 export const MAX_STREAK_FREEZES = 2;
 
@@ -259,36 +264,6 @@ export function nextPracticeStreakWithFreezes(params: {
     return { streak: 1, freezesConsumed: freezes };
 }
 
-/**
- * Freeze balance after a session: spend what was consumed against the gap (the
- * whole bank when the streak lapsed anyway), then award one for crossing a
- * goal-streak earn threshold, capped at MAX_STREAK_FREEZES.
- */
-export function freezesAfterPractice(params: {
-    currentFreezes: number;
-    freezesConsumed: number;
-    prevGoalStreak: number;
-    newGoalStreak: number;
-    goalMetToday: boolean;
-}): number {
-    const {
-        currentFreezes,
-        freezesConsumed,
-        prevGoalStreak,
-        newGoalStreak,
-        goalMetToday,
-    } = params;
-    let freezes = Math.max(0, currentFreezes - freezesConsumed);
-    if (goalMetToday && newGoalStreak > prevGoalStreak) {
-        const earned = FREEZE_EARN_GOAL_STREAKS.filter(
-            (threshold) =>
-                threshold > prevGoalStreak && threshold <= newGoalStreak,
-        ).length;
-        freezes += earned;
-    }
-    return Math.min(freezes, MAX_STREAK_FREEZES);
-}
-
 /** Goal streak shown to the user; breaks when last goal met is older than yesterday. */
 export function effectiveGoalStreak(
     goalStreak: number,
@@ -415,6 +390,20 @@ export interface RecomputedHabit {
     totalGoalDays: number;
     /** Days with real practice, all history (frozen days excluded). */
     totalPracticeDays: number;
+    /** Freezes banked now: earned by the cadence, spent by frozen days. */
+    freezes: number;
+    /**
+     * Consecutive goal-met days still owed for the next freeze, or null while
+     * the bank is full (no progress accrues at cap).
+     */
+    goalDaysUntilNextFreeze: number | null;
+}
+
+/** Consecutive goal-met days the next freeze costs. */
+function earnPrice(earnedInRun: boolean): number {
+    return earnedInRun
+        ? FREEZE_REPEAT_EARN_GOAL_DAYS
+        : FREEZE_FIRST_EARN_GOAL_DAYS;
 }
 
 /**
@@ -429,8 +418,22 @@ export interface RecomputedHabit {
  * Freeze-bridged streaks ARE reconstructed, because the bridge is in the ledger:
  * a `frozen` day keeps the chain alive across a gap the user paid a freeze for,
  * without counting as a practice day itself (45 + 2 frozen + today = 46). A
- * frozen day never contributes to the goal streak, so returning from a freeze
- * restarts the 3-/5-day goal run that earns the next freeze.
+ * frozen day never contributes to the goal streak.
+ *
+ * The freeze BALANCE is derived here too, for the same reason the streak is:
+ * every earn and every spend is already in the ledger (a spend IS a frozen day),
+ * so one forward pass reproduces the balance exactly, however late or out of
+ * order the days arrived. Advancing it from the previous value — as this used to
+ * — made a replayed or backdated flush able to drift it, and tied earning to
+ * absolute goal-streak values (3 and 5) that can each be crossed only once, so a
+ * spent freeze on a long run could never be refilled.
+ *
+ * The cadence: the first freeze of a practice run costs
+ * FREEZE_FIRST_EARN_GOAL_DAYS consecutive goal-met days, each one after it costs
+ * FREEZE_REPEAT_EARN_GOAL_DAYS. A frozen day spends one freeze and resets the
+ * count but NOT the run, which is what makes refilling cost 2 days rather than a
+ * fresh 3. At cap no progress accrues, so a spend is always followed by exactly
+ * FREEZE_REPEAT_EARN_GOAL_DAYS days.
  *
  * @param days Ascending, distinct, YYYY-MM-DD.
  */
@@ -449,6 +452,8 @@ export function recomputeHabitFromDays(
             lastGoalMetDate: null,
             totalGoalDays: 0,
             totalPracticeDays: 0,
+            freezes: 0,
+            goalDaysUntilNextFreeze: FREEZE_FIRST_EARN_GOAL_DAYS,
         };
     }
 
@@ -462,6 +467,12 @@ export function recomputeHabitFromDays(
     let lastPracticeDate: string | null = null;
     let totalGoalDays = 0;
     let totalPracticeDays = 0;
+    let freezes = 0;
+    // Consecutive goal-met days banked toward the next freeze.
+    let sinceEarn = 0;
+    // Has the CURRENT practice run earned a freeze yet? Decides whether the
+    // next one costs the first-earn price or the cheaper repeat price.
+    let earnedInRun = false;
 
     for (const day of days) {
         const contiguous =
@@ -473,10 +484,23 @@ export function recomputeHabitFromDays(
             if (!contiguous || runLength === 0) {
                 runLength = 0;
                 previousDate = null;
+                sinceEarn = 0;
+                earnedInRun = false;
                 continue;
             }
+            // The spend. `earnedInRun` deliberately survives: the run did not
+            // break, so the freeze this day paid for is refilled at the repeat
+            // price rather than starting the cadence over.
+            freezes = Math.max(0, freezes - 1);
+            sinceEarn = 0;
             previousDate = day.date;
             continue;
+        }
+
+        if (!contiguous) {
+            // A gap no freeze bridged: the run is over and the cadence re-arms.
+            sinceEarn = 0;
+            earnedInRun = false;
         }
 
         runLength = contiguous ? runLength + 1 : 1;
@@ -487,14 +511,30 @@ export function recomputeHabitFromDays(
 
         if (day.goalMet) {
             totalGoalDays += 1;
-            goalRunLength =
+            const goalContiguous =
                 previousGoalDate !== null &&
-                addClientDays(previousGoalDate, 1) === day.date
-                    ? goalRunLength + 1
-                    : 1;
+                addClientDays(previousGoalDate, 1) === day.date;
+            goalRunLength = goalContiguous ? goalRunLength + 1 : 1;
             longestGoalStreak = Math.max(longestGoalStreak, goalRunLength);
             previousGoalDate = day.date;
             lastGoalMetDate = day.date;
+
+            if (freezes >= MAX_STREAK_FREEZES) {
+                // Full bank: nothing accrues, so a later spend always costs a
+                // fresh FREEZE_REPEAT_EARN_GOAL_DAYS days to refill.
+                sinceEarn = 0;
+            } else {
+                sinceEarn = goalContiguous ? sinceEarn + 1 : 1;
+                if (sinceEarn >= earnPrice(earnedInRun)) {
+                    freezes += 1;
+                    sinceEarn = 0;
+                    earnedInRun = true;
+                }
+            }
+        } else {
+            // Practiced but missed the goal: the goal run — and the count
+            // toward the next freeze with it — starts over.
+            sinceEarn = 0;
         }
     }
 
@@ -516,6 +556,11 @@ export function recomputeHabitFromDays(
         lastGoalMetDate,
         totalGoalDays,
         totalPracticeDays,
+        freezes,
+        goalDaysUntilNextFreeze:
+            freezes >= MAX_STREAK_FREEZES
+                ? null
+                : earnPrice(earnedInRun) - sinceEarn,
     };
 }
 

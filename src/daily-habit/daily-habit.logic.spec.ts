@@ -2,8 +2,10 @@ import {
     addClientDays,
     bridgeableGap,
     effectiveGoalStreak,
+    FREEZE_FIRST_EARN_GOAL_DAYS,
+    HabitDayPoint,
+    MAX_STREAK_FREEZES,
     effectivePracticeStreak,
-    freezesAfterPractice,
     habitMotivation,
     isStreakAtRisk,
     isStreakMilestone,
@@ -241,18 +243,6 @@ describe('daily-habit.logic', () => {
             ).toEqual({ streak: 1, freezesConsumed: 2 });
         });
 
-        it('zeroes the balance after a lapse consumed every freeze', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 2,
-                    freezesConsumed: 2,
-                    prevGoalStreak: 4,
-                    newGoalStreak: 1,
-                    goalMetToday: false,
-                }),
-            ).toBe(0);
-        });
-
         it('continues from yesterday without spending a freeze', () => {
             expect(
                 nextPracticeStreakWithFreezes({
@@ -263,66 +253,125 @@ describe('daily-habit.logic', () => {
                 }),
             ).toEqual({ streak: 10, freezesConsumed: 0 });
         });
+    });
+});
 
-        it('earns the first freeze after a 3-day goal streak', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 0,
-                    freezesConsumed: 0,
-                    prevGoalStreak: 2,
-                    newGoalStreak: 3,
-                    goalMetToday: true,
-                }),
-            ).toBe(1);
-        });
+/**
+ * The freeze economy, end to end over a ledger — the only place it is decided.
+ * Balance starts at 0, caps at MAX_STREAK_FREEZES; the first freeze of a run
+ * costs 3 consecutive goal-met days and every one after it costs 2.
+ */
+describe('the freeze earn cadence', () => {
+    const goalDay = (date: string) => ({ date, words: 10, goalMet: true });
+    const shortDay = (date: string) => ({ date, words: 4, goalMet: false });
+    const frozenDay = (date: string) => ({
+        date,
+        words: 0,
+        goalMet: false,
+        frozen: true,
+    });
+    /** Consecutive goal-met days 2026-06-01 .. 2026-06-<count>. */
+    const goalDays = (count: number) =>
+        Array.from({ length: count }, (_, index) =>
+            goalDay(addClientDays('2026-06-01', index)),
+        );
+    const freezesAfter = (days: HabitDayPoint[], clientDate: string) =>
+        recomputeHabitFromDays(days, clientDate).freezes;
 
-        it('earns the last freeze after a 5-day goal streak', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 1,
-                    freezesConsumed: 0,
-                    prevGoalStreak: 4,
-                    newGoalStreak: 5,
-                    goalMetToday: true,
-                }),
-            ).toBe(2);
-        });
+    it('banks nothing before the third goal-met day', () => {
+        expect(freezesAfter(goalDays(2), '2026-06-02')).toBe(0);
+        expect(
+            recomputeHabitFromDays(goalDays(2), '2026-06-02')
+                .goalDaysUntilNextFreeze,
+        ).toBe(1);
+    });
 
-        it('earns nothing on goal-streak days between thresholds', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 1,
-                    freezesConsumed: 0,
-                    prevGoalStreak: 3,
-                    newGoalStreak: 4,
-                    goalMetToday: true,
-                }),
-            ).toBe(1);
-        });
+    it('earns the first freeze on the third goal-met day', () => {
+        expect(freezesAfter(goalDays(3), '2026-06-03')).toBe(1);
+    });
 
-        it('caps the freeze balance', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 2,
-                    freezesConsumed: 0,
-                    prevGoalStreak: 9,
-                    newGoalStreak: 10,
-                    goalMetToday: true,
-                }),
-            ).toBe(2);
-        });
+    it('earns the second freeze two goal-met days later', () => {
+        expect(freezesAfter(goalDays(4), '2026-06-04')).toBe(1);
+        expect(freezesAfter(goalDays(5), '2026-06-05')).toBe(2);
+    });
 
-        it('spends consumed freezes before awarding new ones', () => {
-            expect(
-                freezesAfterPractice({
-                    currentFreezes: 1,
-                    freezesConsumed: 1,
-                    prevGoalStreak: 3,
-                    newGoalStreak: 4,
-                    goalMetToday: true,
-                }),
-            ).toBe(0);
-        });
+    it('holds at the cap without banking progress', () => {
+        const result = recomputeHabitFromDays(goalDays(20), '2026-06-20');
+
+        expect(result.freezes).toBe(MAX_STREAK_FREEZES);
+        expect(result.goalDaysUntilNextFreeze).toBeNull();
+    });
+
+    it('refills a spent freeze after exactly two goal-met days', () => {
+        // Five days to a full bank, 06-06 missed and bridged, then back at it.
+        const bridged = [
+            ...goalDays(5),
+            frozenDay('2026-06-06'),
+            goalDay('2026-06-07'),
+        ];
+
+        expect(freezesAfter(bridged, '2026-06-07')).toBe(1);
+        expect(
+            recomputeHabitFromDays(bridged, '2026-06-07')
+                .goalDaysUntilNextFreeze,
+        ).toBe(1);
+        expect(
+            freezesAfter([...bridged, goalDay('2026-06-08')], '2026-06-08'),
+        ).toBe(2);
+    });
+
+    it('re-arms at three days when the streak broke outright', () => {
+        // One freeze banked, then a two-day gap nothing bridged: the run is
+        // over, so the next freeze costs the first-earn price all over again.
+        const broken = [
+            ...goalDays(3),
+            goalDay('2026-06-06'),
+            goalDay('2026-06-07'),
+        ];
+
+        expect(freezesAfter(broken, '2026-06-07')).toBe(1);
+        expect(
+            freezesAfter([...broken, goalDay('2026-06-08')], '2026-06-08'),
+        ).toBe(2);
+    });
+
+    it('spends one freeze per bridged day', () => {
+        const twoDayGap = [
+            ...goalDays(5),
+            frozenDay('2026-06-06'),
+            frozenDay('2026-06-07'),
+            goalDay('2026-06-08'),
+        ];
+
+        expect(freezesAfter(twoDayGap, '2026-06-08')).toBe(0);
+    });
+
+    it('restarts the count when a practice day misses the goal', () => {
+        const missedGoal = [
+            ...goalDays(3),
+            shortDay('2026-06-04'),
+            goalDay('2026-06-05'),
+            goalDay('2026-06-06'),
+        ];
+
+        // The 3-day run banked one; 06-04 broke the goal run, so 06-05/06-06
+        // are a fresh pair — which is the repeat price, so the second lands.
+        expect(freezesAfter(missedGoal, '2026-06-06')).toBe(2);
+        // ...but a single goal-met day after the break is not enough.
+        expect(freezesAfter(missedGoal.slice(0, -1), '2026-06-05')).toBe(1);
+    });
+
+    it('is idempotent: recomputing the same ledger twice agrees', () => {
+        const days = [
+            ...goalDays(5),
+            frozenDay('2026-06-06'),
+            goalDay('2026-06-07'),
+            goalDay('2026-06-08'),
+        ];
+
+        expect(freezesAfter(days, '2026-06-08')).toBe(
+            freezesAfter([...days], '2026-06-08'),
+        );
     });
 });
 
@@ -346,6 +395,8 @@ describe('recomputeHabitFromDays', () => {
             lastGoalMetDate: null,
             totalGoalDays: 0,
             totalPracticeDays: 0,
+            freezes: 0,
+            goalDaysUntilNextFreeze: FREEZE_FIRST_EARN_GOAL_DAYS,
         });
     });
 

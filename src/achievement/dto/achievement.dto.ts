@@ -18,12 +18,6 @@ export class UnlockedAchievementDto {
     @ApiProperty({ description: 'XP awarded for the unlock', example: 57 })
     xpAwarded: number;
 
-    @ApiProperty({
-        description: 'Whether a streak freeze was granted',
-        example: true,
-    })
-    streakFreezeAwarded: boolean;
-
     @ApiProperty({ description: 'When it was unlocked' })
     unlockedAt: Date;
 }

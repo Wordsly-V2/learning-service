@@ -1,5 +1,6 @@
 import { DailyHabitService } from './daily-habit.service';
 import { formatClientDate, parseClientDate } from './daily-habit-date.util';
+import { MAX_STREAK_FREEZES } from './daily-habit.logic';
 
 describe('DailyHabitService', () => {
     const userLoginId = '01936c1e-1234-7890-abcd-ef1234567890';
@@ -564,7 +565,7 @@ describe('DailyHabitService', () => {
             expect(result.goalStreak).toBe(2);
         });
 
-        it('re-earns the first freeze after three consecutive goal days', async () => {
+        it('refills a spent freeze after two consecutive goal days', async () => {
             days = [
                 ...runEndingOn('2026-06-01', 45),
                 {
@@ -598,7 +599,10 @@ describe('DailyHabitService', () => {
             });
 
             expect(result.goalStreak).toBe(3);
-            expect(result.streakFreezes).toBe(1);
+            // 06-03 and 06-04 already paid the repeat price and refilled the
+            // freeze the frozen 06-02 spent; today tops the bank back up to the
+            // cap. The run never broke, so this never costs a fresh three days.
+            expect(result.streakFreezes).toBe(MAX_STREAK_FREEZES);
         });
 
         it('lapses the streak when the gap outruns the bank', async () => {
@@ -613,7 +617,10 @@ describe('DailyHabitService', () => {
 
             expect(result.streak).toBe(1);
             expect(result.longestStreak).toBe(45);
-            expect(result.streakFreezes).toBe(1);
+            // Nothing was bridged, so nothing was spent — and the balance is
+            // read from the ledger, where the 45-day run long ago filled the
+            // bank. The stored 1 was a legacy value the ledger cannot justify.
+            expect(result.streakFreezes).toBe(MAX_STREAK_FREEZES);
             expect(days.some((day) => day.frozen)).toBe(false);
         });
 
@@ -639,16 +646,66 @@ describe('DailyHabitService', () => {
             ];
             habitRow = habitAfterRun(yesterday, 45, 2);
 
-            // Under the goal today, so the repair's debit isn't masked by an
-            // earn from a threshold crossing.
+            // Under the goal today, so today itself cannot earn anything.
             const result = await service.recordPracticeBatch(userLoginId, {
                 days: [{ clientDate: today, wordCount: 3 }],
                 clientDate: today,
             });
 
             expect(result.streak).toBe(46);
-            expect(result.streakFreezes).toBe(1);
+            // The hole is now a frozen day — a real debit — which 06-03 and
+            // 06-04 then refilled at the repeat price.
+            expect(result.streakFreezes).toBe(MAX_STREAK_FREEZES);
             expect(days.filter((day) => day.frozen)).toHaveLength(1);
+        });
+
+        it('walks the whole economy one session at a time', async () => {
+            // The learner-facing contract, day by day: 0 to start, +1 on the
+            // third goal day, +1 two days later, a missed day spends one, and
+            // two more goal days put it back at the cap.
+            const balanceAfterPracticeOn = async (
+                clientDate: string,
+            ): Promise<number> =>
+                (
+                    await service.recordPractice(userLoginId, {
+                        wordCount: 10,
+                        clientDate,
+                    })
+                ).streakFreezes;
+
+            const banked: number[] = [];
+            for (const date of ['06-01', '06-02', '06-03', '06-04', '06-05']) {
+                banked.push(await balanceAfterPracticeOn(`2026-${date}`));
+            }
+            expect(banked).toEqual([0, 0, 1, 1, 2]);
+
+            // 2026-06-06 missed: the next session bridges it with a freeze,
+            // and the two goal days that follow put the balance back at 2.
+            expect(await balanceAfterPracticeOn('2026-06-07')).toBe(1);
+            expect(await balanceAfterPracticeOn('2026-06-08')).toBe(2);
+
+            expect(
+                days
+                    .filter((day) => day.frozen)
+                    .map((day) => formatClientDate(day.practiceDate)),
+            ).toEqual(['2026-06-06']);
+        });
+
+        it('does not double-earn when a flush is replayed', async () => {
+            for (const date of ['06-01', '06-02', '06-03']) {
+                await service.recordPractice(userLoginId, {
+                    wordCount: 10,
+                    clientDate: `2026-${date}`,
+                });
+            }
+
+            // Same day again — a retry, or a second session that day.
+            const result = await service.recordPractice(userLoginId, {
+                wordCount: 10,
+                clientDate: '2026-06-03',
+            });
+
+            expect(result.streakFreezes).toBe(1);
         });
 
         it('reports both total goal days and total practice days', async () => {
