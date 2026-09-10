@@ -1,4 +1,9 @@
-import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import {
+    Inject,
+    Injectable,
+    Logger,
+    OnApplicationBootstrap,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createRemoteJWKSet } from 'jose';
 
@@ -56,7 +61,10 @@ export class JwksWarmupService implements OnApplicationBootstrap {
         try {
             // No token to resolve against, so ask for a key the set will not
             // have; the lookup still performs the fetch, which is the point.
-            await this.jwks({ alg: 'RS256', kid: '__warmup__' } as never, {} as never);
+            await this.jwks(
+                { alg: 'RS256', kid: '__warmup__' } as never,
+                {} as never,
+            );
         } catch {
             // Expected: the warm-up kid never matches. What matters is whether
             // the document itself could be retrieved, reported below.

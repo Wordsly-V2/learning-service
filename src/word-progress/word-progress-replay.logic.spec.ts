@@ -101,7 +101,10 @@ describe('resolveClientToday', () => {
 });
 
 describe('prepareReplayBatch', () => {
-    const prepare = (answers: Parameters<typeof prepareReplayBatch>[0]['answers'], tzOffsetMinutes?: number) =>
+    const prepare = (
+        answers: Parameters<typeof prepareReplayBatch>[0]['answers'],
+        tzOffsetMinutes?: number,
+    ) =>
         prepareReplayBatch({
             answers,
             tzOffsetMinutes,

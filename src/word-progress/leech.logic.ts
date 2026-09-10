@@ -50,7 +50,10 @@ export interface LeechState {
 }
 
 /** Consecutive-correct streak after an answer; any wrong answer resets it. */
-export function nextCorrectStreak(previous: number, isCorrect: boolean): number {
+export function nextCorrectStreak(
+    previous: number,
+    isCorrect: boolean,
+): number {
     return isCorrect ? previous + 1 : 0;
 }
 

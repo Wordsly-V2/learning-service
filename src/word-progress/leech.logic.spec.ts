@@ -27,18 +27,28 @@ describe('nextCorrectStreak', () => {
 
 describe('isLeechAfterAnswer', () => {
     it('flags at the threshold for a card that has never been rescued', () => {
-        expect(isLeechAfterAnswer({ lapses: 7, lapsesAtRescue: 0, threshold: 8 })).toBe(false);
-        expect(isLeechAfterAnswer({ lapses: 8, lapsesAtRescue: 0, threshold: 8 })).toBe(true);
+        expect(
+            isLeechAfterAnswer({ lapses: 7, lapsesAtRescue: 0, threshold: 8 }),
+        ).toBe(false);
+        expect(
+            isLeechAfterAnswer({ lapses: 8, lapsesAtRescue: 0, threshold: 8 }),
+        ).toBe(true);
     });
 
     it('measures lapses since the last rescue, not lifetime', () => {
         // Rescued at 8 lifetime lapses: needs 8 more before it counts again.
-        expect(isLeechAfterAnswer({ lapses: 15, lapsesAtRescue: 8, threshold: 8 })).toBe(false);
-        expect(isLeechAfterAnswer({ lapses: 16, lapsesAtRescue: 8, threshold: 8 })).toBe(true);
+        expect(
+            isLeechAfterAnswer({ lapses: 15, lapsesAtRescue: 8, threshold: 8 }),
+        ).toBe(false);
+        expect(
+            isLeechAfterAnswer({ lapses: 16, lapsesAtRescue: 8, threshold: 8 }),
+        ).toBe(true);
     });
 
     it('never flags when the threshold is disabled', () => {
-        expect(isLeechAfterAnswer({ lapses: 99, lapsesAtRescue: 0, threshold: 0 })).toBe(false);
+        expect(
+            isLeechAfterAnswer({ lapses: 99, lapsesAtRescue: 0, threshold: 0 }),
+        ).toBe(false);
     });
 });
 
@@ -51,7 +61,9 @@ describe('isRescued', () => {
         };
         expect(isRescued(ready)).toBe(true);
         expect(isRescued({ ...ready, wasLeech: false })).toBe(false);
-        expect(isRescued({ ...ready, correctStreak: RESCUE_CORRECT_STREAK - 1 })).toBe(false);
+        expect(
+            isRescued({ ...ready, correctStreak: RESCUE_CORRECT_STREAK - 1 }),
+        ).toBe(false);
         // Still climbing back through relearning steps — not rescued yet.
         expect(isRescued({ ...ready, state: 3 })).toBe(false);
     });
@@ -113,8 +125,12 @@ describe('resolveLeechState', () => {
 
     it('re-flags a rescued card only after another full threshold of lapses', () => {
         const rescued = { ...base, lapsesAtRescue: 8, rescuedCount: 1 };
-        expect(resolveLeechState({ ...rescued, lapses: 15 }).isLeech).toBe(false);
-        expect(resolveLeechState({ ...rescued, lapses: 16 }).isLeech).toBe(true);
+        expect(resolveLeechState({ ...rescued, lapses: 15 }).isLeech).toBe(
+            false,
+        );
+        expect(resolveLeechState({ ...rescued, lapses: 16 }).isLeech).toBe(
+            true,
+        );
     });
 
     it('does not rescue a card that was never a leech', () => {

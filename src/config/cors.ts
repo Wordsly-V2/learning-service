@@ -7,14 +7,19 @@ export function parseCorsOrigins(raw: string | undefined): string[] {
         .filter(Boolean);
 }
 
+/**
+ * Always returns options — never undefined.
+ *
+ * It used to return undefined for an empty origin list, and the caller then
+ * skipped enableCors altogether, so a blank CORS_ENABLED_ORIGINS silently
+ * disabled CORS rather than locking it down. The variable is now required at
+ * boot, and an empty list here means "allow nothing cross-origin", which is the
+ * safe reading.
+ */
 export function buildCorsOptions(
     corsEnabledOrigins: string | undefined,
-): CorsOptions | undefined {
+): CorsOptions {
     const allowedOrigins = parseCorsOrigins(corsEnabledOrigins);
-
-    if (allowedOrigins.length === 0) {
-        return undefined;
-    }
 
     return {
         origin: (origin, callback) => {

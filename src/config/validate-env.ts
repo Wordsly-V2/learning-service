@@ -4,6 +4,10 @@
  * instead of letting the service run with missing/insecure defaults.
  */
 const REQUIRED_ENV_VARS = [
+    // Required, not optional: an empty value used to make buildCorsOptions
+    // return undefined and the caller skip enableCors entirely, silently
+    // disabling CORS instead of locking it down.
+    'CORS_ENABLED_ORIGINS',
     'AUTH_JWKS_URI',
     'JWT_ISSUER',
     'VOCABULARY_SERVICE_HOST',

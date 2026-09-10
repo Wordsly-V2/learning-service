@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/jwt/auth.module';
 import { AccessGuard } from './auth/jwt/access.guard';
 import { UserScopeGuard } from './auth/jwt/user-scope.guard';
@@ -20,9 +20,13 @@ import { AchievementModule } from './achievement/achievement.module';
 import { NotificationModule } from './notification/notification.module';
 import { SyncModule } from './sync/sync.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { HealthModule } from './health/health.module';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { RequestContextLogger } from './common/request-context-logger';
 
 @Module({
     imports: [
+        HealthModule,
         ConfigModule.forRoot({
             isGlobal: true,
             load: [configuration],
@@ -44,6 +48,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     ],
     controllers: [AppController],
     providers: [
+        RequestContextLogger,
+        { provide: APP_FILTER, useClass: AllExceptionsFilter },
         AppService,
         // Registering globally makes the service deny-by-default, so a
         // controller that forgets a decorator fails closed rather than being

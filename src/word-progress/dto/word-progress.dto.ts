@@ -94,6 +94,17 @@ export class BulkAnswerItemDto {
 /** Max answers per bulk practice session save. */
 export const MAX_BULK_ANSWERS = 500;
 
+/**
+ * Cap on an id list in a request body.
+ *
+ * Each of these becomes a Prisma `IN (...)`, so without a bound one request can
+ * ask the database for an unlimited number of rows. BulkRecordAnswersDto has
+ * had a cap since it was written; these are the lists that did not.
+ */
+export const MAX_ID_LIST = 500;
+/** Scope groups fan out into a query each, so this is deliberately tighter. */
+export const MAX_SCOPE_GROUPS = 50;
+
 export class BulkRecordAnswersDto {
     @ApiProperty({
         description: 'Array of word answers to record',
@@ -146,6 +157,7 @@ export class GetDueWordIdsDto {
     })
     @IsOptional()
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds?: string[];
 
@@ -411,6 +423,7 @@ export class LeechWordIdsDto {
     })
     @IsOptional()
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds?: string[];
 
@@ -519,6 +532,7 @@ export class BulkResetProgressDto {
         type: [String],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds: string[];
 }
@@ -531,6 +545,7 @@ export class StatsByWordIdsDto {
     })
     @IsOptional()
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds?: string[];
 
@@ -558,6 +573,7 @@ export class ScopeWordIdsDto {
         type: [String],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds: string[];
 }
@@ -568,6 +584,7 @@ export class StatsByScopesDto {
         type: [ScopeWordIdsDto],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_SCOPE_GROUPS)
     @ValidateNested({ each: true })
     @Type(() => ScopeWordIdsDto)
     scopes: ScopeWordIdsDto[];
@@ -579,6 +596,7 @@ export class ByWordIdsDto {
         type: [String],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     wordIds: string[];
 }
@@ -589,6 +607,7 @@ export class StatsByCourseIdsDto {
         type: [String],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     courseIds: string[];
 }
@@ -599,6 +618,7 @@ export class StatsByLessonIdsDto {
         type: [String],
     })
     @IsArray()
+    @ArrayMaxSize(MAX_ID_LIST)
     @IsUUID(undefined, { each: true })
     lessonIds: string[];
 }

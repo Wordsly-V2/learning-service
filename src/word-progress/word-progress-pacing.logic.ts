@@ -66,7 +66,6 @@ export function newWordTake(
     budget: PacingBudget,
     newLimit?: number,
 ): number {
-    const room =
-        newLimit === undefined ? requestedLimit - dueCount : newLimit;
+    const room = newLimit === undefined ? requestedLimit - dueCount : newLimit;
     return Math.max(0, Math.min(room, budget.newWordsRemainingToday));
 }

@@ -15,8 +15,7 @@ export const MAX_STORED_RESPONSE_BYTES = 256 * 1024;
 export const IN_FLIGHT_STALE_MINUTES = 10;
 
 export const SYNC_ENDPOINT_BULK_ANSWERS = 'word-progress.bulk-sync';
-export const SYNC_ENDPOINT_HABIT_BATCH =
-    'daily-habit.record-practice-batch';
+export const SYNC_ENDPOINT_HABIT_BATCH = 'daily-habit.record-practice-batch';
 
 function isUniqueViolation(error: unknown): boolean {
     return (

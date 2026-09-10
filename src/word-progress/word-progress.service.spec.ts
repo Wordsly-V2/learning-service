@@ -83,8 +83,8 @@ describe('WordProgressService.recordAnswersBulk', () => {
                 update: jest.fn().mockResolvedValue({}),
                 findUnique: jest.fn().mockResolvedValue(null),
             },
-            $transaction: jest.fn(
-                (fn: (tx: typeof prisma) => unknown) => fn(prisma) as unknown,
+            $transaction: jest.fn((fn: (tx: typeof prisma) => unknown) =>
+                fn(prisma),
             ),
         };
 
@@ -258,11 +258,13 @@ describe('WordProgressService.recordAnswersBulk', () => {
         };
         prisma.syncRequest.create.mockRejectedValue(
             Object.assign(
-                new (require('@prisma/client').Prisma
-                    .PrismaClientKnownRequestError)('dup', {
-                    code: 'P2002',
-                    clientVersion: 'test',
-                }),
+                new (require('@prisma/client').Prisma.PrismaClientKnownRequestError)(
+                    'dup',
+                    {
+                        code: 'P2002',
+                        clientVersion: 'test',
+                    },
+                ),
             ),
         );
         prisma.syncRequest.findUnique.mockResolvedValue({

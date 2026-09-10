@@ -1,14 +1,25 @@
 import { AppModule } from '@/app.module';
 import { ConfigService } from '@nestjs/config';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Transport } from '@nestjs/microservices';
 import { buildCorsOptions, parseCorsOrigins } from '@/config/cors';
 import { runWithCaller } from '@/http-clients/caller-context';
+import helmet from 'helmet';
+import { requestIdMiddleware } from '@/common/request-id.middleware';
+import { RequestContextLogger } from '@/common/request-context-logger';
+
+const bootLogger = new Logger('Bootstrap');
 
 async function bootstrap() {
     const app = await NestFactory.create(AppModule);
+
+    app.useLogger(app.get(RequestContextLogger));
+
+    // First, so every later middleware, guard and handler runs inside
+    // the store and logs the same id the caller was given back.
+    app.use(requestIdMiddleware);
 
     // Put the caller's credential in scope for the whole request, before
     // anything else runs. The vocabulary client reads it from here rather than
@@ -28,13 +39,16 @@ async function bootstrap() {
             ),
     );
 
+    // Baseline security headers. CSP is off because this service serves the
+    // Swagger UI at /api, whose inline bootstrap script the default policy
+    // blocks — leaving the docs page blank. Every response here is JSON or that
+    // docs page, so there is no HTML injection surface for CSP to protect.
+    app.use(helmet({ contentSecurityPolicy: false }));
+
     const configService = app.get(ConfigService);
     const corsEnabledOrigins = configService.get<string>('corsEnabledOrigins');
 
-    const corsOptions = buildCorsOptions(corsEnabledOrigins);
-    if (corsOptions) {
-        app.enableCors(corsOptions);
-    }
+    app.enableCors(buildCorsOptions(corsEnabledOrigins));
 
     app.useGlobalPipes(
         new ValidationPipe({
@@ -98,11 +112,11 @@ async function bootstrap() {
 
     await app.startAllMicroservices();
     await app.listen(appPort as number);
-    console.log(`Learning Service HTTP is running on port ${appPort}`);
-    console.log(
+    bootLogger.log(`Learning Service HTTP is running on port ${appPort}`);
+    bootLogger.log(
         `CORS enabled origins: ${parseCorsOrigins(corsEnabledOrigins).join(', ') || 'none'}`,
     );
-    console.log(
+    bootLogger.log(
         `Swagger documentation available at http://localhost:${appPort}/api`,
     );
 }
