@@ -587,14 +587,47 @@ export class WordProgressService {
         );
 
         if (wordIds.length === 0) {
-            return { wordIds: [], pacing: budget };
+            return {
+                wordIds: [],
+                dueWordIds: [],
+                newWordIds: [],
+                dueTotal: 0,
+                newTotal: 0,
+                pacing: budget,
+            };
         }
 
         const dueLimit = reviewTake(limit, budget);
 
+        // Every id in scope that the learner has a card for. It answers both
+        // "how many are new" (the ones with no card) and "which are new" without
+        // a second round trip, and it is the same snapshot the due query runs
+        // against, so the two halves of the session cannot disagree.
+        const [progressRows, dueTotal] = await Promise.all([
+            this.prisma.wordProgress.findMany({
+                where: { userLoginId, wordId: { in: wordIds } },
+                select: { wordId: true },
+            }),
+            this.prisma.wordProgress.count({
+                where: {
+                    userLoginId,
+                    nextReviewAt: { lte: now },
+                    suspendedAt: null,
+                    wordId: { in: wordIds },
+                },
+            }),
+        ]);
+        const progressSet = new Set(progressRows.map((p) => p.wordId));
+        const newTotal = wordIds.filter((id) => !progressSet.has(id)).length;
+
         // Most-overdue first: the words closest to being forgotten are the ones
         // whose review matters most, and the DB does the sort + limit for us.
         // Suspended cards are withheld from selection.
+        //
+        // wordId breaks ties. Cards imported or seeded together share a
+        // nextReviewAt to the millisecond, and `ORDER BY` on that alone leaves
+        // the rows the `take` keeps up to the planner — so the same request
+        // twice could return two different sets of "the 15 most overdue".
         const dueRows =
             dueLimit > 0
                 ? await this.prisma.wordProgress.findMany({
@@ -605,7 +638,7 @@ export class WordProgressService {
                           wordId: { in: wordIds },
                       },
                       select: { wordId: true },
-                      orderBy: { nextReviewAt: 'asc' },
+                      orderBy: [{ nextReviewAt: 'asc' }, { wordId: 'asc' }],
                       take: dueLimit,
                   })
                 : [];
@@ -615,20 +648,24 @@ export class WordProgressService {
         const newTake = includeNew
             ? newWordTake(limit, dueIds.length, budget, newLimit)
             : 0;
-        if (newTake <= 0) {
-            return { wordIds: dueIds, pacing: budget };
-        }
 
-        const progressWordIds = await this.prisma.wordProgress.findMany({
-            where: { userLoginId, wordId: { in: wordIds } },
-            select: { wordId: true },
-        });
-        const progressSet = new Set(progressWordIds.map((p) => p.wordId));
-        const newIds = wordIds
-            .filter((id) => !progressSet.has(id))
-            .slice(0, newTake);
+        // Caller order decides which new words come first. It is the scope order
+        // from vocabulary-service — course, then lesson, then word — so a
+        // learner works through one course's lessons in order instead of being
+        // handed the alphabetically-first word of every course at once.
+        const newIds =
+            newTake > 0
+                ? wordIds.filter((id) => !progressSet.has(id)).slice(0, newTake)
+                : [];
 
-        return { wordIds: [...dueIds, ...newIds], pacing: budget };
+        return {
+            wordIds: [...dueIds, ...newIds],
+            dueWordIds: dueIds,
+            newWordIds: newIds,
+            dueTotal,
+            newTotal,
+            pacing: budget,
+        };
     }
 
     /** Leech cards within a scope, most-lapsed first. */

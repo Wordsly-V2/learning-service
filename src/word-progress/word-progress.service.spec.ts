@@ -12,6 +12,8 @@ import {
 
 const WORD_A = '01936b3e-7c8f-7890-abcd-ef1234567890';
 const WORD_B = '01936b3e-7c8f-7890-abcd-ef1234567891';
+const WORD_C = '01936b3e-7c8f-7890-abcd-ef1234567892';
+const WORD_D = '01936b3e-7c8f-7890-abcd-ef1234567893';
 const USER = '01936c1e-1234-7890-abcd-ef1234567890';
 const REQUEST_ID = '01936c1e-1234-7890-abcd-ef1234567899';
 
@@ -300,5 +302,126 @@ describe('WordProgressService.recordAnswersBulk', () => {
             }),
         ).rejects.toBeInstanceOf(ConflictException);
         expect(awardXp).not.toHaveBeenCalled();
+    });
+});
+
+describe('WordProgressService.getDueWordIds', () => {
+    const SCOPE = [WORD_A, WORD_B, WORD_C, WORD_D];
+
+    /**
+     * Prisma double where the scope holds four words: A and B have cards and are
+     * both due, C and D have never been studied.
+     */
+    const buildService = (settings: {
+        dailyNewWordLimit: number;
+        dailyReviewLimit: number;
+        today?: { reviews: number; newWords: number };
+    }) => {
+        const dueRows = [{ wordId: WORD_A }, { wordId: WORD_B }];
+        const prisma = {
+            wordProgress: {
+                findMany: jest.fn(
+                    (args: { orderBy?: unknown; take?: number }) =>
+                        Promise.resolve(
+                            args.orderBy
+                                ? dueRows.slice(0, args.take)
+                                : dueRows,
+                        ),
+                ),
+                count: jest.fn().mockResolvedValue(dueRows.length),
+            },
+            dailyReviewStat: {
+                findUnique: jest.fn().mockResolvedValue(settings.today ?? null),
+            },
+        };
+        const service = new WordProgressService(
+            prisma as never,
+            {} as never,
+            {
+                getSettings: jest.fn().mockResolvedValue({
+                    dailyNewWordLimit: settings.dailyNewWordLimit,
+                    dailyReviewLimit: settings.dailyReviewLimit,
+                }),
+            } as never,
+            {} as never,
+        );
+        return { service, prisma };
+    };
+
+    it('labels the due and new halves and reports the uncapped totals', async () => {
+        const { service } = buildService({
+            dailyNewWordLimit: 10,
+            dailyReviewLimit: 100,
+        });
+
+        const result = await service.getDueWordIds(USER, {
+            wordIds: SCOPE,
+            limit: 20,
+            newLimit: 5,
+            includeNew: true,
+        });
+
+        expect(result.dueWordIds).toEqual([WORD_A, WORD_B]);
+        expect(result.newWordIds).toEqual([WORD_C, WORD_D]);
+        expect(result.wordIds).toEqual([WORD_A, WORD_B, WORD_C, WORD_D]);
+        expect(result.dueTotal).toBe(2);
+        expect(result.newTotal).toBe(2);
+    });
+
+    it('breaks nextReviewAt ties on wordId so repeated calls agree', async () => {
+        const { service, prisma } = buildService({
+            dailyNewWordLimit: 10,
+            dailyReviewLimit: 100,
+        });
+
+        await service.getDueWordIds(USER, { wordIds: SCOPE, limit: 20 });
+
+        const dueQuery = prisma.wordProgress.findMany.mock.calls
+            .map((call) => call[0] as { orderBy?: unknown })
+            .find((args) => args.orderBy);
+        expect(dueQuery?.orderBy).toEqual([
+            { nextReviewAt: 'asc' },
+            { wordId: 'asc' },
+        ]);
+    });
+
+    it('never returns more words than the session asked for', async () => {
+        const { service } = buildService({
+            dailyNewWordLimit: 10,
+            dailyReviewLimit: 100,
+        });
+
+        // Two due words fill a session of two, so newLimit buys nothing extra —
+        // this is what used to hand back 2 + 5 for a "2 words per session".
+        const result = await service.getDueWordIds(USER, {
+            wordIds: SCOPE,
+            limit: 2,
+            newLimit: 5,
+            includeNew: true,
+        });
+
+        expect(result.wordIds).toHaveLength(2);
+        expect(result.newWordIds).toEqual([]);
+        // The totals still tell the UI what is being held back.
+        expect(result.newTotal).toBe(2);
+    });
+
+    it('does not spend the review budget on words learned today', async () => {
+        const { service } = buildService({
+            dailyNewWordLimit: 10,
+            dailyReviewLimit: 6,
+            // Six answers today, five of them first sightings of new words.
+            today: { reviews: 6, newWords: 5 },
+        });
+
+        const result = await service.getDueWordIds(USER, {
+            wordIds: SCOPE,
+            limit: 20,
+            includeNew: false,
+        });
+
+        // One genuine review today, so five review slots are left — not zero.
+        expect(result.pacing?.reviewsRemainingToday).toBe(5);
+        expect(result.dueWordIds).toEqual([WORD_A, WORD_B]);
     });
 });

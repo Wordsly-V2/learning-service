@@ -178,7 +178,8 @@ export class GetDueWordIdsDto {
     lessonId?: string;
 
     @ApiPropertyOptional({
-        description: 'Maximum number of words to return',
+        description:
+            'Size of the whole session — due words plus whatever new words fit in the room they leave.',
         example: 20,
         default: 20,
         minimum: 1,
@@ -193,7 +194,7 @@ export class GetDueWordIdsDto {
 
     @ApiPropertyOptional({
         description:
-            'Maximum number of NEW (never-studied) words to include, independent of the due/review cap. When omitted, new words fill whatever room the combined `limit` leaves after due words (legacy behaviour).',
+            'Ceiling on NEW (never-studied) words within the session. It narrows the room left by due words, it is not an extra allowance on top of `limit`. When omitted, new words take all the remaining room.',
         example: 5,
         minimum: 0,
         maximum: 100,
@@ -396,10 +397,25 @@ export class PacingInfoDto {
     dailyReviewLimit: number;
 }
 
+/**
+ * One session's worth of words, plus the totals it was drawn from.
+ *
+ * The due and new halves are returned separately because callers need to tell
+ * them apart. They used to have to: the client asked twice, once with
+ * `includeNew: false` and once with it on, and subtracted one id list from the
+ * other. Two independent reads of a limited, time-dependent query are not
+ * guaranteed to agree, so a due word that moved between the two calls came back
+ * labelled "new".
+ *
+ * `dueTotal` / `newTotal` are the uncapped counts in scope. The session lists
+ * are capped by the requested limits AND by the daily pacing budget, so a UI
+ * that shows one and links to the other reads as a bug — these let it show both
+ * ("Review 8 of 15 due") and explain the gap from `pacing`.
+ */
 export class DueWordIdsResponseDto {
     @ApiProperty({
         description:
-            'List of word IDs that are due for review (same order as due-words API)',
+            'The whole session: due word IDs first, then new ones. Equal to dueWordIds concatenated with newWordIds.',
         type: [String],
         example: [
             '01936b3e-7c8f-7890-abcd-ef1234567890',
@@ -407,6 +423,34 @@ export class DueWordIdsResponseDto {
         ],
     })
     wordIds: string[];
+
+    @ApiProperty({
+        description:
+            'Word IDs due for review, most overdue first, capped by the limit and the daily review budget.',
+        type: [String],
+    })
+    dueWordIds: string[];
+
+    @ApiProperty({
+        description:
+            'Never-studied word IDs filling the room left in the session, capped by newLimit and the daily new-word budget.',
+        type: [String],
+    })
+    newWordIds: string[];
+
+    @ApiProperty({
+        description:
+            'How many words in scope are due right now, before any cap. Always >= dueWordIds.length.',
+        example: 15,
+    })
+    dueTotal: number;
+
+    @ApiProperty({
+        description:
+            'How many words in scope have never been studied, before any cap. Always >= newWordIds.length.',
+        example: 120,
+    })
+    newTotal: number;
 
     @ApiPropertyOptional({
         description: 'Remaining daily pacing budget after this request',
