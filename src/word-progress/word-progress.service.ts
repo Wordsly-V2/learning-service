@@ -39,6 +39,7 @@ import {
     reviewTake,
 } from './word-progress-pacing.logic';
 import { nextCorrectStreak, resolveLeechState } from './leech.logic';
+import { preserveSchedule, shouldPreserveSchedule } from './off-schedule.logic';
 import {
     MAX_BATCH_DATES,
     prepareReplayBatch,
@@ -182,6 +183,29 @@ export class WordProgressService {
                 ? existing.lastReviewedAt
                 : reviewedAt;
 
+        // A correct answer on a Review-state card the learner pulled forward
+        // themselves leaves the whole schedule alone — see off-schedule.logic.ts
+        // for why feeding FSRS a delta_t of ~0 is worse than feeding it nothing.
+        const preserved =
+            existing && shouldPreserveSchedule(existing, effectiveAt, isCorrect)
+                ? preserveSchedule(existing)
+                : null;
+
+        const scheduled = preserved ?? {
+            ...calculateNextReview(
+                quality,
+                toSchedulerInput(existing, effectiveAt),
+                effectiveAt,
+            ),
+            // Only a scheduling review moves these, so a leech cannot be
+            // rescued, nor a card mastered, by re-answering it off-schedule.
+            correctStreak: nextCorrectStreak(
+                existing?.correctStreak ?? 0,
+                isCorrect,
+            ),
+            lastReviewedAt: effectiveAt,
+        };
+
         const {
             easeFactor,
             interval,
@@ -191,25 +215,25 @@ export class WordProgressService {
             state,
             lapses,
             learningSteps,
-        } = calculateNextReview(
-            quality,
-            toSchedulerInput(existing, effectiveAt),
-            effectiveAt,
-        );
-
-        const correctStreak = nextCorrectStreak(
-            existing?.correctStreak ?? 0,
-            isCorrect,
-        );
-        const leech = resolveLeechState({
-            wasLeech: existing?.isLeech ?? false,
-            lapsesAtRescue: existing?.lapsesAtRescue ?? 0,
-            rescuedCount: existing?.rescuedCount ?? 0,
-            lapses,
-            state,
             correctStreak,
-            threshold: leechConfig.threshold,
-        });
+            lastReviewedAt,
+        } = scheduled;
+
+        const leech = preserved
+            ? {
+                  isLeech: preserved.isLeech,
+                  lapsesAtRescue: preserved.lapsesAtRescue,
+                  rescuedCount: preserved.rescuedCount,
+              }
+            : resolveLeechState({
+                  wasLeech: existing?.isLeech ?? false,
+                  lapsesAtRescue: existing?.lapsesAtRescue ?? 0,
+                  rescuedCount: existing?.rescuedCount ?? 0,
+                  lapses,
+                  state,
+                  correctStreak,
+                  threshold: leechConfig.threshold,
+              });
 
         // A correct answer keeps the card in rotation (clears any suspension);
         // an incorrect answer on a leech auto-suspends it when enabled. Otherwise
@@ -235,7 +259,7 @@ export class WordProgressService {
                 lapses,
                 learningSteps,
                 correctStreak,
-                lastReviewedAt: effectiveAt,
+                lastReviewedAt,
                 nextReviewAt,
                 totalReviews: 1,
                 correctReviews: isCorrect ? 1 : 0,
@@ -253,7 +277,7 @@ export class WordProgressService {
                 lapses,
                 learningSteps,
                 correctStreak,
-                lastReviewedAt: effectiveAt,
+                lastReviewedAt,
                 nextReviewAt,
                 totalReviews: { increment: 1 },
                 ...(isCorrect && {
@@ -305,6 +329,78 @@ export class WordProgressService {
         return parseClientDate(clientDate ?? formatClientDate(now));
     }
 
+    /**
+     * Claim each (date, word) pair in the `DailyPracticedWord` ledger and report
+     * which ones were the learner's FIRST touch of that word on that day.
+     *
+     * Those are the only answers that earn XP or count toward the daily goal —
+     * see the model comment for why. Repeat answers still flow into
+     * `totalReviews` and `DailyReviewStat`, so accuracy is unaffected; it is
+     * only the two currencies that are deduped, which is what stops a
+     * hand-picked saved-words session from being farmed.
+     *
+     * Read-then-insert inside the caller's transaction. Two sessions racing on
+     * the same word could in principle both see it unclaimed and both pay for
+     * it; that is the same window the XP-per-day cap has always had, and the
+     * ledger still bounds the damage to one extra award.
+     *
+     * @returns the `date|wordId` keys that were claimed by THIS call.
+     */
+    private async claimFirstPracticeOfDay(
+        tx: Prisma.TransactionClient,
+        userLoginId: string,
+        pairs: { reviewDate: string; wordId: string }[],
+    ): Promise<Set<string>> {
+        const key = (reviewDate: string, wordId: string) =>
+            `${reviewDate}|${wordId}`;
+
+        const wordIdsByDate = new Map<string, Set<string>>();
+        for (const pair of pairs) {
+            const bucket = wordIdsByDate.get(pair.reviewDate) ?? new Set();
+            bucket.add(pair.wordId);
+            wordIdsByDate.set(pair.reviewDate, bucket);
+        }
+
+        // One OR branch per calendar date, bounded by MAX_BATCH_DATES.
+        const alreadyClaimed = await tx.dailyPracticedWord.findMany({
+            where: {
+                userLoginId,
+                OR: [...wordIdsByDate].map(([date, wordIds]) => ({
+                    practiceDate: parseClientDate(date),
+                    wordId: { in: [...wordIds] },
+                })),
+            },
+            select: { practiceDate: true, wordId: true },
+        });
+        const claimedBefore = new Set(
+            alreadyClaimed.map((row) =>
+                key(formatClientDate(row.practiceDate), row.wordId),
+            ),
+        );
+
+        const toInsert = [...wordIdsByDate].flatMap(([date, wordIds]) =>
+            [...wordIds]
+                .filter((wordId) => !claimedBefore.has(key(date, wordId)))
+                .map((wordId) => ({
+                    userLoginId,
+                    practiceDate: parseClientDate(date),
+                    wordId,
+                })),
+        );
+        if (toInsert.length > 0) {
+            await tx.dailyPracticedWord.createMany({
+                data: toInsert,
+                skipDuplicates: true,
+            });
+        }
+
+        return new Set(
+            toInsert.map((row) =>
+                key(formatClientDate(row.practiceDate), row.wordId),
+            ),
+        );
+    }
+
     async recordAnswer(
         recordAnswerDto: RecordAnswerDto & { userLoginId: string },
     ): Promise<WordProgressResponseDto> {
@@ -336,17 +432,27 @@ export class WordProgressService {
                     quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
                 newWords: existing === null ? 1 : 0,
             });
-            const baseXp = xpForAnswer({
-                quality,
-                isNewWord: existing === null,
-                wasMastered: existing
-                    ? isMastered(existing.state, existing.interval)
-                    : false,
-                isMastered: isMastered(
-                    wordProgress.state,
-                    wordProgress.interval,
-                ),
-            });
+            // A word pays out at most once a day, however many times it is
+            // answered — the ledger is what makes that true.
+            const claimed = await this.claimFirstPracticeOfDay(
+                tx,
+                userLoginId,
+                [{ reviewDate: formatClientDate(reviewDate), wordId }],
+            );
+            const baseXp =
+                claimed.size === 0
+                    ? 0
+                    : xpForAnswer({
+                          quality,
+                          isNewWord: existing === null,
+                          wasMastered: existing
+                              ? isMastered(existing.state, existing.interval)
+                              : false,
+                          isMastered: isMastered(
+                              wordProgress.state,
+                              wordProgress.interval,
+                          ),
+                      });
             const goalStreak = await this.liveGoalStreak(
                 tx,
                 userLoginId,
@@ -377,7 +483,7 @@ export class WordProgressService {
         body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
         if (body.answers.length === 0) {
-            return { results: [], xpMultiplier: 1 };
+            return { results: [], xpMultiplier: 1, countedWordsByDate: {} };
         }
         if (body.answers.length > MAX_BULK_ANSWERS) {
             throw new BadRequestException(
@@ -431,6 +537,31 @@ export class WordProgressService {
                     existingList.map((progress) => [progress.wordId, progress]),
                 );
 
+                // Claimed up front for the whole batch, so a word answered three
+                // times in one offline session pays once — and pays on the day
+                // it was first answered, not the day the flush landed.
+                const claimedKeys = await this.claimFirstPracticeOfDay(
+                    tx,
+                    userLoginId,
+                    answers.map((answer) => ({
+                        reviewDate: answer.reviewDate,
+                        wordId: answer.wordId,
+                    })),
+                );
+                // Consumed as it is spent: `claimedKeys` holds one key per
+                // DISTINCT (date, word), but the loop below walks every answer,
+                // and an offline session can hold three answers for one word.
+                const unpaidKeys = new Set(claimedKeys);
+                /** Words counted toward the daily goal, per calendar date. */
+                const countedWordsByDate = new Map<string, number>();
+                for (const claimed of claimedKeys) {
+                    const date = claimed.slice(0, claimed.indexOf('|'));
+                    countedWordsByDate.set(
+                        date,
+                        (countedWordsByDate.get(date) ?? 0) + 1,
+                    );
+                }
+
                 // Final state per word, in first-appearance order. The response
                 // stays one row per word — returning three rows for one word
                 // would break the client's wordId-keyed reconciliation.
@@ -478,7 +609,9 @@ export class WordProgressService {
                         delta.newWords++;
                     }
 
+                    const payKey = `${answer.reviewDate}|${answer.wordId}`;
                     if (
+                        unpaidKeys.delete(payKey) &&
                         isXpEligible(
                             answer.reviewDate,
                             priorReviewsByDate,
@@ -537,6 +670,11 @@ export class WordProgressService {
                     ),
                     levelEvent,
                     xpMultiplier,
+                    // The client used to count the session's words itself and
+                    // send that number to daily-habit. This is the server's own
+                    // count, already deduped per day, so a repeat round of the
+                    // same words cannot inflate the daily goal.
+                    countedWordsByDate: Object.fromEntries(countedWordsByDate),
                 };
             },
             {
@@ -544,7 +682,11 @@ export class WordProgressService {
                 // MAX_BULK_ANSWERS-sized batch of sequential upserts will blow.
                 maxWait: 10_000,
                 timeout: 60_000,
-                emptyOnTruncated: () => ({ results: [], xpMultiplier: 1 }),
+                emptyOnTruncated: () => ({
+                    results: [],
+                    xpMultiplier: 1,
+                    countedWordsByDate: {},
+                }),
             },
         );
     }

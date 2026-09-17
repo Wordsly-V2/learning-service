@@ -357,6 +357,13 @@ export class BulkRecordAnswersResponseDto {
         example: false,
     })
     replayed?: boolean;
+
+    @ApiProperty({
+        description:
+            "Words that counted toward the daily goal, keyed by the answer's local calendar date. A word counts at most once per day however many times it was answered, so the client must send THESE numbers to daily-habit rather than counting the session itself.",
+        example: { '2026-09-17': 12 },
+    })
+    countedWordsByDate: Record<string, number>;
 }
 
 export class DueWordDto extends WordProgressResponseDto {

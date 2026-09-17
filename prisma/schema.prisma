@@ -235,6 +235,53 @@ model SyncRequest {
   @@map("sync_request")
 }
 
+// A word the learner has flagged as hard, to come back to on purpose.
+//
+// Deliberately NOT a column on WordProgress: that row only exists once a word
+// has been answered, and resetProgress DELETES it — so a bookmark living there
+// would vanish the moment a learner reset their progress, and could not be set
+// at all from the word-details screen before the first practice. This is the
+// learner's own shelf and outlives their schedule.
+//
+// wordId points at vocabulary-service (no cross-DB FK); rows are dropped when
+// WORDS_DELETED_TOPIC reports the word gone.
+model SavedWord {
+  userLoginId String   @map("user_login_id") @db.Uuid
+  wordId      String   @map("word_id") @db.Uuid
+  /// Optional note on why it is hard — the learner's own words.
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([userLoginId, wordId])
+  @@index([userLoginId, createdAt(sort: Desc)])
+  @@index([wordId])
+  @@map("saved_word")
+}
+
+// One word the learner practised on one calendar day. The primary key IS the
+// rule: "a word counts once per day", for XP and for the daily goal alike, no
+// matter how many sessions, retries or replays touch it.
+//
+// It exists because both currencies were previously per-answer: XP was paid for
+// every answer (bounded only by XP_ELIGIBLE_ANSWERS_PER_DAY), and the daily
+// goal's `wordCount` was a number the CLIENT sent and the server added up. So
+// re-answering the same ten words made a ten-word day look like a twenty-word
+// one. That was survivable while the scheduler chose the words; now that a
+// learner can hand-pick a saved-words session, it is a button.
+//
+// Repeat answers are still recorded everywhere else — totalReviews,
+// correctReviews and DailyReviewStat all count them, so accuracy stays honest.
+// Only the two currencies are deduped.
+model DailyPracticedWord {
+  userLoginId  String   @map("user_login_id") @db.Uuid
+  practiceDate DateTime @map("practice_date") @db.Date
+  wordId       String   @map("word_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@id([userLoginId, practiceDate, wordId])
+  @@map("daily_practiced_word")
+}
+
 // One-shot per-day consistency XP grants. The PK is the idempotency guarantee:
 // a replayed flush, a backdated day arriving late, or two racing batches can
 // each pay "first practice of 2026-08-11" at most once, ever.

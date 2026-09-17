@@ -12,6 +12,7 @@ import { HttpClientsModule } from './http-clients/http-clients.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { DailyHabitModule } from './daily-habit/daily-habit.module';
 import { WordProgressModule } from './word-progress/word-progress.module';
+import { SavedWordModule } from '@/saved-word/saved-word.module';
 import { LearningReportModule } from './learning-report/learning-report.module';
 import { UserLevelModule } from './user-level/user-level.module';
 import { LearningSettingsModule } from './learning-settings/learning-settings.module';
@@ -37,6 +38,7 @@ import { RequestContextLogger } from './common/request-context-logger';
         ScheduleModule.forRoot(),
         PrismaModule,
         WordProgressModule,
+        SavedWordModule,
         DailyHabitModule,
         LearningReportModule,
         UserLevelModule,

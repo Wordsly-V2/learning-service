@@ -37,6 +37,10 @@ Config through `src/config/configuration.ts`; env validated at boot. The Kafka m
 
 `recordAnswer` / `recordAnswersBulk` run one transaction that must stay atomic: upsert `WordProgress` + upsert the per-day `DailyReviewStat` aggregate (DB-side increments so concurrent sessions never lose writes) + award XP via `UserLevelService.awardXp(tx, ...)`. Bulk input is capped at `MAX_BULK_ANSWERS = 500`.
 
+**Off-schedule practice does not reschedule** (`word-progress/off-schedule.logic.ts`). A learner can hand-pick words to practise (the difficult-words list, `saved-word` module). A *correct* answer on a Review-state card that is not yet due leaves the entire card untouched — interval, stability, state, lapses, `correctStreak` and `lastReviewedAt` all carry over — because FSRS infers stability from elapsed time and an answer given early carries no information while still pushing the due date out. A *wrong* answer takes the normal FSRS path, so the rule can only ever pull a card closer, never push it away. Cards in Learning/Relearning are exempt: intraday step repetition is how they are meant to work.
+
+**XP and the daily goal are deduped per word per day** by the `DailyPracticedWord` ledger (PK = the rule). `recordAnswersBulk` claims each (date, word) pair up front; only claimed answers earn XP, and the claim counts are returned as `countedWordsByDate` for the client to send to daily-habit instead of counting the session itself. `totalReviews`, `correctReviews` and `DailyReviewStat` still count every answer, so accuracy is unaffected.
+
 **Offline replay is a first-class case** — read `word-progress-replay.logic.ts` before touching the bulk path:
 
 - Each answer may carry its own `reviewedAt` (ISO instant) so FSRS schedules from when the user answered, not from sync time. It is client data, so it is clamped: never more than 2 minutes into the future, never older than 14 days, never earlier than that card's `lastReviewedAt`. `clientDate` is reinterpreted as the client's *today* and clamped to ±1 day of the server date.

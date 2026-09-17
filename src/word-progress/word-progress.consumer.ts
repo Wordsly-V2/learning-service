@@ -8,6 +8,7 @@ import {
     Payload,
 } from '@nestjs/microservices';
 import { WordProgressService } from './word-progress.service';
+import { SavedWordService } from '@/saved-word/saved-word.service';
 
 /** Payload for vocabulary_word-deleted Kafka message (one per word). */
 export interface WordDeletedPayload {
@@ -15,13 +16,18 @@ export interface WordDeletedPayload {
 }
 
 /**
- * Handles Kafka events for word progress: removes all progress rows for a deleted word.
+ * Handles Kafka events for word progress: removes everything this service holds
+ * for a deleted word — the schedule AND any learner's manual "difficult word"
+ * flag, which would otherwise be left pointing at vocabulary that is gone.
  */
 @Controller()
 export class WordProgressConsumer {
     private readonly logger = new Logger(WordProgressConsumer.name);
 
-    constructor(private readonly wordProgressService: WordProgressService) {}
+    constructor(
+        private readonly wordProgressService: WordProgressService,
+        private readonly savedWordService: SavedWordService,
+    ) {}
 
     @EventPattern(WORDS_DELETED_TOPIC)
     async handleWordDeleted(
@@ -37,10 +43,12 @@ export class WordProgressConsumer {
             context,
             logger: this.logger,
             operation: `delete word progress (${WORDS_DELETED_TOPIC})`,
-            handler: () =>
-                this.wordProgressService.deleteProgressForWords(
+            handler: async () => {
+                await this.wordProgressService.deleteProgressForWords(
                     payload.wordIds,
-                ),
+                );
+                await this.savedWordService.deleteForWords(payload.wordIds);
+            },
         });
     }
 }
