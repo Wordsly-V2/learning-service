@@ -8,19 +8,18 @@ import {
     IsOptional,
     IsString,
     IsUUID,
-    Matches,
     Max,
     Min,
     ValidateNested,
 } from 'class-validator';
 import { UnlockedAchievementDto } from '@/achievement/dto/achievement.dto';
+import { MAX_BULK_ANSWERS } from '@/word-progress/dto/word-progress.dto';
+import { IsClientDate } from '../daily-habit-date.util';
 
 export const DAILY_GOAL_WORDS = 10;
 export const DAILY_GOAL_MIN = 5;
 export const DAILY_GOAL_MAX = 50;
 export const ACTIVITY_HISTORY_DAYS = 7;
-
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export class DailyHabitQueryDto {
     @ApiPropertyOptional({
@@ -29,7 +28,7 @@ export class DailyHabitQueryDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 
@@ -38,9 +37,13 @@ export class RecordDailyPracticeDto {
         description: 'Number of words practiced in this session',
         example: 5,
         minimum: 1,
+        maximum: MAX_BULK_ANSWERS,
     })
     @IsInt()
     @Min(1)
+    // One session is one bulk save, which cannot hold more answers than this —
+    // let alone more distinct words. Anything larger is not a real session.
+    @Max(MAX_BULK_ANSWERS)
     wordCount: number;
 
     @ApiProperty({
@@ -48,7 +51,7 @@ export class RecordDailyPracticeDto {
         example: '2026-06-05',
     })
     @IsString()
-    @Matches(DATE_PATTERN)
+    @IsClientDate()
     clientDate: string;
 }
 
@@ -64,7 +67,7 @@ export class DailyPracticeDayDto {
         example: '2026-08-11',
     })
     @IsString()
-    @Matches(DATE_PATTERN)
+    @IsClientDate()
     clientDate: string;
 
     @ApiProperty({
@@ -98,7 +101,7 @@ export class BatchRecordDailyPracticeDto {
         example: '2026-08-13',
     })
     @IsString()
-    @Matches(DATE_PATTERN)
+    @IsClientDate()
     clientDate: string;
 
     @ApiPropertyOptional({

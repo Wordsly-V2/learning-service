@@ -4,12 +4,47 @@ import {
     IsOptional,
     IsString,
     Matches,
+    MaxLength,
+    ValidateBy,
     ValidateNested,
+    ValidationOptions,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsPushEndpoint } from '../push-endpoint';
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Whether `value` is a time zone Intl can resolve. The reminder scheduler feeds
+ * the stored zone straight into Intl.DateTimeFormat, which throws a RangeError
+ * on an unknown one — so a bad value saved here would break that user's
+ * reminders on every tick instead of being refused once, at the door.
+ */
+export function isIanaTimeZone(value: unknown): boolean {
+    if (typeof value !== 'string' || value.length === 0) {
+        return false;
+    }
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: value });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function IsIanaTimeZone(options?: ValidationOptions): PropertyDecorator {
+    return ValidateBy(
+        {
+            name: 'isIanaTimeZone',
+            validator: {
+                validate: (value) => isIanaTimeZone(value),
+                defaultMessage: () =>
+                    'timezone must be an IANA time zone, e.g. Asia/Ho_Chi_Minh',
+            },
+        },
+        options,
+    );
+}
 
 export class PushSubscriptionKeysDto {
     @ApiProperty({ description: 'p256dh key' })
@@ -61,6 +96,8 @@ export class UpdatePreferencesDto {
     })
     @IsOptional()
     @IsString()
+    @MaxLength(64)
+    @IsIanaTimeZone()
     timezone?: string;
 }
 

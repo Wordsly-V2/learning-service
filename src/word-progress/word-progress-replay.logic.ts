@@ -4,6 +4,10 @@ import {
 } from '@/daily-habit/daily-habit-date.util';
 import { AnswerQuality } from './dto/word-progress.dto';
 
+// Lives with the other calendar-date helpers because daily-habit applies the
+// same rule; re-exported so the replay policy still reads as one module.
+export { resolveClientToday } from '@/daily-habit/daily-habit-date.util';
+
 /**
  * Clock policy for replayed offline answers.
  *
@@ -29,9 +33,6 @@ export const MAX_BACKDATE_DAYS = 14;
  * widening it cannot silently admit a month-spanning forgery.
  */
 export const MAX_BATCH_DATES = 30;
-
-/** How far the client's claimed "today" may differ from the server date. */
-const MAX_CLIENT_TODAY_DRIFT_DAYS = 1;
 
 const MS_PER_DAY = 86_400_000;
 
@@ -111,29 +112,6 @@ export function resolveAnswerDate(
         return fallbackClientDate;
     }
     return formatClientDate(new Date(at.getTime() + tzOffsetMinutes * 60_000));
-}
-
-/**
- * The client's "today", sanity-bounded. More than a day away from the server
- * date is nonsense, and letting it through would allow backdating `clientDate`
- * to farm a stale goal-streak XP multiplier.
- */
-export function resolveClientToday(
-    clientDate: string | undefined,
-    now: Date,
-): string {
-    const serverToday = formatClientDate(now);
-    if (clientDate === undefined) {
-        return serverToday;
-    }
-
-    const drift = Math.abs(
-        (parseClientDate(clientDate).getTime() -
-            parseClientDate(serverToday).getTime()) /
-            MS_PER_DAY,
-    );
-
-    return drift > MAX_CLIENT_TODAY_DRIFT_DAYS ? serverToday : clientDate;
 }
 
 function dayDiff(from: string, to: string): number {

@@ -117,12 +117,14 @@ export class WordProgressService {
         private readonly syncRequests: SyncRequestService,
     ) {}
 
-    /** Live goal streak for XP multiplier, decayed to the client's "today". */
+    /**
+     * Live goal streak for XP multiplier, decayed to the client's "today" —
+     * which callers must already have clamped (resolveClientToday).
+     */
     private async liveGoalStreak(
         tx: Prisma.TransactionClient,
         userLoginId: string,
-        clientDate: string | undefined,
-        now: Date,
+        clientToday: string,
     ): Promise<number> {
         const habit = await tx.dailyHabit.findUnique({
             where: { userLoginId },
@@ -134,7 +136,7 @@ export class WordProgressService {
         return effectiveGoalStreak(
             habit.goalStreak,
             habit.lastGoalMetDate,
-            clientDate ?? formatClientDate(now),
+            clientToday,
         );
     }
 
@@ -324,9 +326,13 @@ export class WordProgressService {
         });
     }
 
-    /** Resolve the calendar date a review belongs to (client-local, else server). */
+    /**
+     * The calendar date a review belongs to: the client's today, clamped to ±1
+     * day of the server date by the same rule as the bulk path. Unclamped, a
+     * single answer could file its stats (and pacing) under any day it liked.
+     */
     private resolveReviewDate(clientDate: string | undefined, now: Date): Date {
-        return parseClientDate(clientDate ?? formatClientDate(now));
+        return parseClientDate(resolveClientToday(clientDate, now));
     }
 
     /**
@@ -339,10 +345,12 @@ export class WordProgressService {
      * only the two currencies that are deduped, which is what stops a
      * hand-picked saved-words session from being farmed.
      *
-     * Read-then-insert inside the caller's transaction. Two sessions racing on
-     * the same word could in principle both see it unclaimed and both pay for
-     * it; that is the same window the XP-per-day cap has always had, and the
-     * ledger still bounds the damage to one extra award.
+     * One `INSERT ... ON CONFLICT DO NOTHING RETURNING` inside the caller's
+     * transaction, and the claim is whatever came back. The primary key is the
+     * mutex: a session racing on the same word blocks on the other's row and
+     * then inserts nothing, so it cannot also pay. (This used to read first and
+     * report the rows it *meant* to insert, which let two racing sessions both
+     * believe they had claimed the word.)
      *
      * @returns the `date|wordId` keys that were claimed by THIS call.
      */
@@ -354,48 +362,31 @@ export class WordProgressService {
         const key = (reviewDate: string, wordId: string) =>
             `${reviewDate}|${wordId}`;
 
-        const wordIdsByDate = new Map<string, Set<string>>();
+        // Deduped client-side too: one INSERT may not name the same key twice
+        // even with ON CONFLICT, and a bulk batch repeats words by design.
+        const toInsert = new Map<
+            string,
+            { userLoginId: string; practiceDate: Date; wordId: string }
+        >();
         for (const pair of pairs) {
-            const bucket = wordIdsByDate.get(pair.reviewDate) ?? new Set();
-            bucket.add(pair.wordId);
-            wordIdsByDate.set(pair.reviewDate, bucket);
-        }
-
-        // One OR branch per calendar date, bounded by MAX_BATCH_DATES.
-        const alreadyClaimed = await tx.dailyPracticedWord.findMany({
-            where: {
+            toInsert.set(key(pair.reviewDate, pair.wordId), {
                 userLoginId,
-                OR: [...wordIdsByDate].map(([date, wordIds]) => ({
-                    practiceDate: parseClientDate(date),
-                    wordId: { in: [...wordIds] },
-                })),
-            },
-            select: { practiceDate: true, wordId: true },
-        });
-        const claimedBefore = new Set(
-            alreadyClaimed.map((row) =>
-                key(formatClientDate(row.practiceDate), row.wordId),
-            ),
-        );
-
-        const toInsert = [...wordIdsByDate].flatMap(([date, wordIds]) =>
-            [...wordIds]
-                .filter((wordId) => !claimedBefore.has(key(date, wordId)))
-                .map((wordId) => ({
-                    userLoginId,
-                    practiceDate: parseClientDate(date),
-                    wordId,
-                })),
-        );
-        if (toInsert.length > 0) {
-            await tx.dailyPracticedWord.createMany({
-                data: toInsert,
-                skipDuplicates: true,
+                practiceDate: parseClientDate(pair.reviewDate),
+                wordId: pair.wordId,
             });
         }
+        if (toInsert.size === 0) {
+            return new Set();
+        }
+
+        const inserted = await tx.dailyPracticedWord.createManyAndReturn({
+            data: [...toInsert.values()],
+            skipDuplicates: true,
+            select: { practiceDate: true, wordId: true },
+        });
 
         return new Set(
-            toInsert.map((row) =>
+            inserted.map((row) =>
                 key(formatClientDate(row.practiceDate), row.wordId),
             ),
         );
@@ -406,9 +397,16 @@ export class WordProgressService {
     ): Promise<WordProgressResponseDto> {
         const { wordId, quality, userLoginId, clientDate } = recordAnswerDto;
         const now = new Date();
-        const reviewDate = this.resolveReviewDate(clientDate, now);
+        // Same clamp and same XP cap as the bulk path — otherwise the single
+        // endpoint is a way around both.
+        const clientToday = resolveClientToday(clientDate, now);
+        const reviewDate = parseClientDate(clientToday);
         const settings =
             await this.learningSettingsService.getSettings(userLoginId);
+        const priorReviewsByDate = await this.readPriorReviewCounts(
+            userLoginId,
+            [clientToday],
+        );
 
         return await this.prisma.$transaction(async (tx) => {
             const existing = await tx.wordProgress.findUnique({
@@ -426,21 +424,27 @@ export class WordProgressService {
                     autoSuspend: settings.leechAutoSuspend,
                 },
             );
-            await this.recordReviewStat(tx, userLoginId, reviewDate, {
+            const delta: ReviewStatDelta = {
                 reviews: 1,
                 correctReviews:
                     quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
                 newWords: existing === null ? 1 : 0,
-            });
+            };
+            await this.recordReviewStat(tx, userLoginId, reviewDate, delta);
             // A word pays out at most once a day, however many times it is
             // answered — the ledger is what makes that true.
             const claimed = await this.claimFirstPracticeOfDay(
                 tx,
                 userLoginId,
-                [{ reviewDate: formatClientDate(reviewDate), wordId }],
+                [{ reviewDate: clientToday, wordId }],
             );
             const baseXp =
-                claimed.size === 0
+                claimed.size === 0 ||
+                !isXpEligible(
+                    clientToday,
+                    priorReviewsByDate,
+                    new Map([[clientToday, delta]]),
+                )
                     ? 0
                     : xpForAnswer({
                           quality,
@@ -456,8 +460,7 @@ export class WordProgressService {
             const goalStreak = await this.liveGoalStreak(
                 tx,
                 userLoginId,
-                clientDate,
-                now,
+                clientToday,
             );
             const xp = applyStreakMultiplier(baseXp, goalStreak);
             const levelEvent = await this.userLevelService.awardXp(
@@ -492,7 +495,11 @@ export class WordProgressService {
         }
 
         const now = new Date();
-        const clientToday = resolveClientToday(body.clientDate, now);
+        const clientToday = resolveClientToday(
+            body.clientDate,
+            now,
+            body.tzOffsetMinutes,
+        );
         const { answers, report } = prepareReplayBatch({
             answers: body.answers,
             tzOffsetMinutes: body.tzOffsetMinutes,
@@ -651,7 +658,6 @@ export class WordProgressService {
                     tx,
                     userLoginId,
                     clientToday,
-                    now,
                 );
                 const xpMultiplier = streakXpMultiplier(goalStreak);
                 const xpEarned = applyStreakMultiplier(

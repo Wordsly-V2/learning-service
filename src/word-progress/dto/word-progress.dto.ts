@@ -10,15 +10,13 @@ import {
     IsOptional,
     IsString,
     IsUUID,
-    Matches,
     Max,
     Min,
     ArrayMaxSize,
     ValidateNested,
 } from 'class-validator';
+import { IsClientDate } from '@/daily-habit/daily-habit-date.util';
 
-/** Client local calendar date format shared with the daily-habit module. */
-export const CLIENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Quality rating for spaced repetition (mapped to FSRS grades)
@@ -61,7 +59,7 @@ export class RecordAnswerDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 
@@ -123,7 +121,7 @@ export class BulkRecordAnswersDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 
     @ApiPropertyOptional({
@@ -227,7 +225,7 @@ export class GetDueWordIdsDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 

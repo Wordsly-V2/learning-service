@@ -15,6 +15,7 @@ import {
     datesEqual,
     formatClientDate,
     parseClientDate,
+    resolveClientToday,
 } from './daily-habit-date.util';
 import {
     addClientDays,
@@ -85,9 +86,13 @@ export class DailyHabitService {
         userLoginId: string,
         body: RecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
+        // A single session is by definition practice done TODAY, so the day it
+        // is filed under gets the same clamp as "today" itself. Passing the raw
+        // date as the day would still let a far-off clientDate backdate it.
+        const clientToday = resolveClientToday(body.clientDate, new Date());
         return this.recordPracticeBatch(userLoginId, {
-            days: [{ clientDate: body.clientDate, wordCount: body.wordCount }],
-            clientDate: body.clientDate,
+            days: [{ clientDate: clientToday, wordCount: body.wordCount }],
+            clientDate: clientToday,
         });
     }
 
@@ -113,7 +118,11 @@ export class DailyHabitService {
         userLoginId: string,
         body: BatchRecordDailyPracticeDto,
     ): Promise<DailyHabitResponseDto> {
-        const clientToday = body.clientDate;
+        // Client data, so bounded to ±1 day of the server date like the
+        // word-progress write path. Every other date in the batch is measured
+        // against this — the future check and the backdate floor — so an
+        // unclamped "today" would drag the whole window with it.
+        const clientToday = resolveClientToday(body.clientDate, new Date());
         const today = parseClientDate(clientToday);
 
         const merged = mergePracticeDays(body.days);

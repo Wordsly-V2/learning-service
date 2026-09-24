@@ -4,12 +4,11 @@ import {
     IsInt,
     IsOptional,
     IsString,
-    Matches,
     Max,
     Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { CLIENT_DATE_PATTERN } from '@/word-progress/dto/word-progress.dto';
+import { IsClientDate } from '@/daily-habit/daily-habit-date.util';
 import type { ReportGranularity, ReportPeriod } from '../learning-report.logic';
 
 export const REPORT_PERIODS: ReportPeriod[] = ['week', 'month', 'year'];
@@ -34,7 +33,7 @@ export class ReviewForecastQueryDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 
@@ -45,7 +44,7 @@ export class ActivityCalendarQueryDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 
@@ -80,7 +79,7 @@ export class LearningReportQueryDto {
     })
     @IsOptional()
     @IsString()
-    @Matches(CLIENT_DATE_PATTERN)
+    @IsClientDate()
     clientDate?: string;
 }
 

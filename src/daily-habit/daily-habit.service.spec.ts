@@ -7,6 +7,22 @@ describe('DailyHabitService', () => {
     const today = '2026-06-05';
     const yesterday = '2026-06-04';
 
+    /**
+     * Pin the server clock to midday of a client date. The write path clamps
+     * the client's "today" to ±1 day of the server date, so the clock has to
+     * agree with the calendar each test is written against.
+     */
+    const serverDayIs = (date: string) =>
+        jest.setSystemTime(Date.parse(`${date}T12:00:00.000Z`));
+
+    beforeAll(() => {
+        // Only Date is faked — the service awaits real promises throughout.
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
+    });
+    afterAll(() => {
+        jest.useRealTimers();
+    });
+
     /** In-memory stand-in for the DailyHabitDay ledger the service recomputes from. */
     type DayRow = {
         practiceDate: Date;
@@ -50,6 +66,7 @@ describe('DailyHabitService', () => {
         );
 
     beforeEach(() => {
+        serverDayIs(today);
         days = [];
         grants = [];
         habitRow = null;
@@ -665,13 +682,15 @@ describe('DailyHabitService', () => {
             // two more goal days put it back at the cap.
             const balanceAfterPracticeOn = async (
                 clientDate: string,
-            ): Promise<number> =>
-                (
+            ): Promise<number> => {
+                serverDayIs(clientDate);
+                return (
                     await service.recordPractice(userLoginId, {
                         wordCount: 10,
                         clientDate,
                     })
                 ).streakFreezes;
+            };
 
             const banked: number[] = [];
             for (const date of ['06-01', '06-02', '06-03', '06-04', '06-05']) {
@@ -693,6 +712,7 @@ describe('DailyHabitService', () => {
 
         it('does not double-earn when a flush is replayed', async () => {
             for (const date of ['06-01', '06-02', '06-03']) {
+                serverDayIs(`2026-${date}`);
                 await service.recordPractice(userLoginId, {
                     wordCount: 10,
                     clientDate: `2026-${date}`,

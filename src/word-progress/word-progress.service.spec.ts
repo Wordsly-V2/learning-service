@@ -42,11 +42,17 @@ const progressRow = (wordId: string, overrides = {}) => ({
     ...overrides,
 });
 
+type ClaimRow = { practiceDate: Date; wordId: string };
+
 describe('WordProgressService.recordAnswersBulk', () => {
     let prisma: {
-        wordProgress: { findMany: jest.Mock; upsert: jest.Mock };
+        wordProgress: {
+            findMany: jest.Mock;
+            findUnique: jest.Mock;
+            upsert: jest.Mock;
+        };
         dailyReviewStat: { findMany: jest.Mock; upsert: jest.Mock };
-        dailyPracticedWord: { findMany: jest.Mock; createMany: jest.Mock };
+        dailyPracticedWord: { createManyAndReturn: jest.Mock };
         dailyHabit: { findUnique: jest.Mock };
         syncRequest: {
             create: jest.Mock;
@@ -68,6 +74,7 @@ describe('WordProgressService.recordAnswersBulk', () => {
         prisma = {
             wordProgress: {
                 findMany: jest.fn().mockResolvedValue([]),
+                findUnique: jest.fn().mockResolvedValue(null),
                 upsert: jest.fn(
                     (args: {
                         where: { wordId_userLoginId: { wordId: string } };
@@ -82,10 +89,12 @@ describe('WordProgressService.recordAnswersBulk', () => {
                 upsert: jest.fn().mockResolvedValue({}),
             },
             // Nothing claimed yet, so every (date, word) in a batch is a first
-            // touch and pays — which is what the pre-ledger tests assume.
+            // touch and the insert hands every row back — which is what the
+            // pre-ledger tests assume.
             dailyPracticedWord: {
-                findMany: jest.fn().mockResolvedValue([]),
-                createMany: jest.fn().mockResolvedValue({ count: 0 }),
+                createManyAndReturn: jest.fn((args: { data: ClaimRow[] }) =>
+                    Promise.resolve(args.data),
+                ),
             },
             dailyHabit: { findUnique: jest.fn().mockResolvedValue(null) },
             syncRequest: {
@@ -300,12 +309,8 @@ describe('WordProgressService.recordAnswersBulk', () => {
         prisma.wordProgress.findMany.mockResolvedValue([
             progressRow(WORD_A, { totalReviews: 5 }),
         ]);
-        prisma.dailyPracticedWord.findMany.mockResolvedValue([
-            {
-                practiceDate: new Date(`${reviewDate}T00:00:00.000Z`),
-                wordId: WORD_A,
-            },
-        ]);
+        // ON CONFLICT DO NOTHING: the row exists, so nothing comes back.
+        prisma.dailyPracticedWord.createManyAndReturn.mockResolvedValue([]);
 
         const result = await service.recordAnswersBulk(USER, {
             answers: [
@@ -319,7 +324,6 @@ describe('WordProgressService.recordAnswersBulk', () => {
             clientDate: reviewDate,
         });
 
-        expect(prisma.dailyPracticedWord.createMany).not.toHaveBeenCalled();
         const [, , xpAwarded] = awardXp.mock.calls[0] as [
             unknown,
             string,
@@ -327,6 +331,49 @@ describe('WordProgressService.recordAnswersBulk', () => {
         ];
         expect(xpAwarded).toBe(0);
         expect(result.countedWordsByDate).toEqual({});
+    });
+
+    it('pays only for the claims its own insert actually won', async () => {
+        const reviewedAt = new Date();
+        const reviewDate = formatClientDate(reviewedAt);
+        prisma.wordProgress.findMany.mockResolvedValue([
+            progressRow(WORD_A, { totalReviews: 5 }),
+            progressRow(WORD_B, { totalReviews: 5 }),
+        ]);
+        // A concurrent session claimed WORD_A between our read of the world
+        // and our insert: ON CONFLICT skipped it, so only WORD_B came back.
+        prisma.dailyPracticedWord.createManyAndReturn.mockImplementation(
+            (args: { data: ClaimRow[] }) =>
+                Promise.resolve(
+                    args.data.filter((row) => row.wordId === WORD_B),
+                ),
+        );
+
+        const result = await service.recordAnswersBulk(USER, {
+            answers: [WORD_A, WORD_A, WORD_B].map((wordId, index) => ({
+                wordId,
+                quality: AnswerQuality.PERFECT,
+                reviewedAt: new Date(
+                    reviewedAt.getTime() - (3 - index) * 1_000,
+                ).toISOString(),
+            })),
+            tzOffsetMinutes: 0,
+            clientDate: reviewDate,
+        });
+
+        // One insert, one row per distinct (date, word), skipping conflicts.
+        const [[insert]] = prisma.dailyPracticedWord.createManyAndReturn.mock
+            .calls as [[{ data: ClaimRow[]; skipDuplicates: boolean }]];
+        expect(insert.skipDuplicates).toBe(true);
+        expect(insert.data.map((row) => row.wordId)).toEqual([WORD_A, WORD_B]);
+
+        const [, , xpAwarded] = awardXp.mock.calls[0] as [
+            unknown,
+            string,
+            number,
+        ];
+        expect(xpAwarded).toBe(6);
+        expect(result.countedWordsByDate).toEqual({ [reviewDate]: 1 });
     });
 
     it('does not touch the ledger when no clientRequestId is sent', async () => {
@@ -387,6 +434,134 @@ describe('WordProgressService.recordAnswersBulk', () => {
             }),
         ).rejects.toBeInstanceOf(ConflictException);
         expect(awardXp).not.toHaveBeenCalled();
+    });
+});
+
+describe('WordProgressService.recordAnswer', () => {
+    let prisma: {
+        wordProgress: { findUnique: jest.Mock; upsert: jest.Mock };
+        dailyReviewStat: { findMany: jest.Mock; upsert: jest.Mock };
+        dailyPracticedWord: { createManyAndReturn: jest.Mock };
+        dailyHabit: { findUnique: jest.Mock };
+        $transaction: jest.Mock;
+    };
+    let awardXp: jest.Mock;
+    let service: WordProgressService;
+
+    const serverToday = () => formatClientDate(new Date());
+    const daysFromToday = (offset: number) =>
+        formatClientDate(new Date(Date.now() + offset * 86_400_000));
+    const xpAwarded = () =>
+        (awardXp.mock.calls[0] as [unknown, string, number])[2];
+
+    beforeEach(() => {
+        awardXp = jest.fn().mockResolvedValue({ leveledUp: false });
+        prisma = {
+            wordProgress: {
+                // An existing card, so no new-word XP muddies the arithmetic.
+                findUnique: jest
+                    .fn()
+                    .mockResolvedValue(
+                        progressRow(WORD_A, { totalReviews: 5 }),
+                    ),
+                upsert: jest.fn(() => Promise.resolve(progressRow(WORD_A))),
+            },
+            dailyReviewStat: {
+                findMany: jest.fn().mockResolvedValue([]),
+                upsert: jest.fn().mockResolvedValue({}),
+            },
+            dailyPracticedWord: {
+                createManyAndReturn: jest.fn((args: { data: ClaimRow[] }) =>
+                    Promise.resolve(args.data),
+                ),
+            },
+            dailyHabit: { findUnique: jest.fn().mockResolvedValue(null) },
+            $transaction: jest.fn((fn: (tx: typeof prisma) => unknown) =>
+                fn(prisma),
+            ),
+        };
+        service = new WordProgressService(
+            prisma as never,
+            { awardXp } as never,
+            {
+                getSettings: jest.fn().mockResolvedValue({
+                    leechThreshold: 8,
+                    leechAutoSuspend: false,
+                }),
+            } as never,
+            {} as never,
+        );
+    });
+
+    const answer = (clientDate?: string) =>
+        service.recordAnswer({
+            wordId: WORD_A,
+            quality: AnswerQuality.PERFECT,
+            userLoginId: USER,
+            clientDate,
+        });
+
+    it('files a backdated clientDate under the server date, like the bulk path', async () => {
+        await answer(daysFromToday(-10));
+
+        const [[statUpsert]] = prisma.dailyReviewStat.upsert.mock.calls as [
+            [{ create: { reviewDate: Date } }],
+        ];
+        expect(formatClientDate(statUpsert.create.reviewDate)).toBe(
+            serverToday(),
+        );
+        const [[claim]] = prisma.dailyPracticedWord.createManyAndReturn.mock
+            .calls as [[{ data: ClaimRow[] }]];
+        expect(formatClientDate(claim.data[0].practiceDate)).toBe(
+            serverToday(),
+        );
+    });
+
+    it('keeps a clientDate within a day of the server date', async () => {
+        const yesterday = daysFromToday(-1);
+        await answer(yesterday);
+
+        const [[statUpsert]] = prisma.dailyReviewStat.upsert.mock.calls as [
+            [{ create: { reviewDate: Date } }],
+        ];
+        expect(formatClientDate(statUpsert.create.reviewDate)).toBe(yesterday);
+    });
+
+    it('stops paying XP once the day is at the cap, but still records the review', async () => {
+        prisma.dailyReviewStat.findMany.mockResolvedValue([
+            {
+                reviewDate: new Date(`${serverToday()}T00:00:00.000Z`),
+                reviews: XP_ELIGIBLE_ANSWERS_PER_DAY,
+            },
+        ]);
+
+        await answer(serverToday());
+
+        expect(prisma.wordProgress.upsert).toHaveBeenCalledTimes(1);
+        expect(prisma.dailyReviewStat.upsert).toHaveBeenCalledTimes(1);
+        expect(xpAwarded()).toBe(0);
+    });
+
+    it('still pays the last answer that fits under the cap', async () => {
+        prisma.dailyReviewStat.findMany.mockResolvedValue([
+            {
+                reviewDate: new Date(`${serverToday()}T00:00:00.000Z`),
+                reviews: XP_ELIGIBLE_ANSWERS_PER_DAY - 1,
+            },
+        ]);
+
+        await answer(serverToday());
+
+        // A perfect answer on an existing card is 6 XP.
+        expect(xpAwarded()).toBe(6);
+    });
+
+    it('pays nothing when a concurrent session already claimed the word', async () => {
+        prisma.dailyPracticedWord.createManyAndReturn.mockResolvedValue([]);
+
+        await answer(serverToday());
+
+        expect(xpAwarded()).toBe(0);
     });
 });
 
