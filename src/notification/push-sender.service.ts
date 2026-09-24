@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/prisma/prisma.service';
 import * as webPush from 'web-push';
+import { isAllowedPushEndpoint } from './push-endpoint';
+
+/** A push service that doesn't answer in this long is treated as a failed send. */
+const PUSH_SEND_TIMEOUT_MS = 10_000;
 
 export interface PushPayload {
     title: string;
@@ -57,6 +61,13 @@ export class PushSenderService {
         const json = JSON.stringify(payload);
         await Promise.all(
             subscriptions.map(async (sub) => {
+                // Rows saved before endpoints were validated may point anywhere.
+                if (!isAllowedPushEndpoint(sub.endpoint)) {
+                    await this.prisma.pushSubscription
+                        .delete({ where: { endpoint: sub.endpoint } })
+                        .catch(() => undefined);
+                    return;
+                }
                 try {
                     await webPush.sendNotification(
                         {
@@ -64,6 +75,7 @@ export class PushSenderService {
                             keys: { p256dh: sub.p256dh, auth: sub.auth },
                         },
                         json,
+                        { timeout: PUSH_SEND_TIMEOUT_MS },
                     );
                 } catch (err) {
                     const statusCode = (err as { statusCode?: number })

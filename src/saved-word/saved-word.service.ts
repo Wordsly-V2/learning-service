@@ -111,7 +111,7 @@ export class SavedWordService {
 
     /** Drop saved words for deleted vocabulary (Kafka fan-out). */
     async deleteForWords(wordIds: string[]): Promise<void> {
-        if (wordIds.length === 0) {
+        if (!Array.isArray(wordIds) || wordIds.length === 0) {
             return;
         }
         await this.prisma.savedWord.deleteMany({

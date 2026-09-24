@@ -3,6 +3,7 @@ import {
     Controller,
     Delete,
     Get,
+    NotFoundException,
     Param,
     ParseUUIDPipe,
     Post,
@@ -82,6 +83,16 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() recordAnswerDto: RecordAnswerDto,
     ): Promise<WordProgressResponseDto> {
+        // Progress rows carry no ownership of their own, so without this any
+        // uuid would mint a "new word" and pay out XP for vocabulary the
+        // learner never had.
+        const owned = await this.wordScopeService.filterOwnedWordIds([
+            recordAnswerDto.wordId,
+        ]);
+        if (!owned.has(recordAnswerDto.wordId)) {
+            throw new NotFoundException('Word not found');
+        }
+
         // The id is spread in last and comes from the token. The DTO no longer
         // declares one, so a body that supplies it is stripped by the global
         // whitelisting ValidationPipe before this handler ever runs.
@@ -107,7 +118,16 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
-        return this.wordProgressService.recordAnswersBulk(userLoginId, body);
+        // Unowned answers are dropped rather than failing the batch: an offline
+        // session can legitimately hold answers for a word deleted since, and
+        // rejecting the whole flush would strand every other answer in it.
+        const owned = await this.wordScopeService.filterOwnedWordIds(
+            body.answers.map((answer) => answer.wordId),
+        );
+        return this.wordProgressService.recordAnswersBulk(userLoginId, {
+            ...body,
+            answers: body.answers.filter((answer) => owned.has(answer.wordId)),
+        });
     }
 
     @Post('due-word-ids')

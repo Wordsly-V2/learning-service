@@ -1004,6 +1004,11 @@ export class WordProgressService {
     }
 
     async deleteProgressForWords(wordIds: string[]): Promise<void> {
+        // An empty or missing list must never reach deleteMany: `{ in: undefined }`
+        // is treated as no filter and would drop every user's progress.
+        if (!Array.isArray(wordIds) || wordIds.length === 0) {
+            return;
+        }
         await this.prisma.wordProgress.deleteMany({
             where: { wordId: { in: wordIds } },
         });

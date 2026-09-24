@@ -57,6 +57,23 @@ export class WordScopeService {
         return wordIds;
     }
 
+    /**
+     * The subset of `wordIds` the caller owns. Order and duplicates are not
+     * preserved; callers filter their own list against the returned set.
+     */
+    async filterOwnedWordIds(wordIds: string[]): Promise<Set<string>> {
+        const unique = [...new Set(wordIds)];
+        if (unique.length === 0) return new Set();
+        const { wordIds: owned } = await this.call<{ wordIds: string[] }>(
+            () =>
+                this.vocabularyHttp.post('/words/filter-owned', {
+                    wordIds: unique,
+                }),
+            'filter owned word ids',
+        );
+        return new Set(owned);
+    }
+
     async groupByCourseIds(
         courseIds: string[],
     ): Promise<Record<string, WordScopeGroup>> {

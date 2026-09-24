@@ -7,6 +7,7 @@ import {
     ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsPushEndpoint } from '../push-endpoint';
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -23,6 +24,7 @@ export class PushSubscriptionKeysDto {
 export class SubscribeDto {
     @ApiProperty({ description: 'Push endpoint URL' })
     @IsString()
+    @IsPushEndpoint()
     endpoint: string;
 
     @ApiProperty({ type: PushSubscriptionKeysDto })

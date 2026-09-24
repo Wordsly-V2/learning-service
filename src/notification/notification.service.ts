@@ -13,12 +13,30 @@ const DEFAULT_PREFERENCES = {
     timezone: 'UTC',
 };
 
+/** Devices a learner can receive reminders on at once. */
+const MAX_SUBSCRIPTIONS_PER_USER = 10;
+
 @Injectable()
 export class NotificationService {
     constructor(private readonly prisma: PrismaService) {}
 
     /** Upsert a subscription keyed by endpoint (re-subscribe moves ownership). */
     async subscribe(userLoginId: string, body: SubscribeDto): Promise<void> {
+        // Each subscribe is a server-side send target, so cap them per user.
+        // Evict the oldest rather than reject: a learner who reinstalled the PWA
+        // a dozen times still wants the newest device to work.
+        const stale = await this.prisma.pushSubscription.findMany({
+            where: { userLoginId, endpoint: { not: body.endpoint } },
+            orderBy: { createdAt: 'desc' },
+            skip: MAX_SUBSCRIPTIONS_PER_USER - 1,
+            select: { id: true },
+        });
+        if (stale.length > 0) {
+            await this.prisma.pushSubscription.deleteMany({
+                where: { id: { in: stale.map((sub) => sub.id) } },
+            });
+        }
+
         await this.prisma.pushSubscription.upsert({
             where: { endpoint: body.endpoint },
             create: {
