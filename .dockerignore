@@ -1,0 +1,15 @@
+# Never send secrets or host build output into an image. Without this file
+# `COPY . .` baked the real .env (managed DB / Redis / Kafka credentials) into
+# every image, along with macOS-built node_modules.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+node_modules
+dist
+coverage
+.git
+.DS_Store
+.cursor
+.claude
