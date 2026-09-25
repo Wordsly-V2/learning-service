@@ -34,7 +34,7 @@ import {
     StatsByCourseIdsDto,
     StatsByLessonIdsDto,
 } from './dto/word-progress.dto';
-import { ItemSource } from '@prisma/client';
+import { ItemSource } from '@/word-scope/item-source';
 import { ItemScopeService } from '@/word-scope/item-scope.service';
 import type { ItemSourceParam } from '@/word-scope/item-source';
 import { WordScopeService } from '@/word-scope/word-scope.service';

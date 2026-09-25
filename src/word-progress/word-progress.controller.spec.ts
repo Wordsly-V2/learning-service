@@ -1,7 +1,7 @@
 jest.mock('uuid', () => ({ v7: () => '00000000-0000-7000-8000-000000000000' }));
 
 import { NotFoundException } from '@nestjs/common';
-import { ItemSource } from '@prisma/client';
+import { ItemSource } from '@/word-scope/item-source';
 import { ItemScopeService } from '@/word-scope/item-scope.service';
 import { AnswerQuality } from './dto/word-progress.dto';
 import { WordProgressController } from './word-progress.controller';
