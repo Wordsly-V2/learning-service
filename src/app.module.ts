@@ -4,6 +4,7 @@ import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/jwt/auth.module';
 import { AccessGuard } from './auth/jwt/access.guard';
 import { UserScopeGuard } from './auth/jwt/user-scope.guard';
+import { RolesGuard } from './auth/jwt/roles.guard';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import configuration from './config/configuration';
@@ -59,6 +60,9 @@ import { RequestContextLogger } from './common/request-context-logger';
         // the caller is; UserScopeGuard makes sure the request did not try to
         // name someone else.
         { provide: APP_GUARD, useClass: AccessGuard },
+        // Must stay right after AccessGuard: it reads the roles AccessGuard
+        // attached from the verified token.
+        { provide: APP_GUARD, useClass: RolesGuard },
         { provide: APP_GUARD, useClass: UserScopeGuard },
     ],
 })

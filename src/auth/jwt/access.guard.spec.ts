@@ -102,6 +102,21 @@ describe('AccessGuard', () => {
         );
     });
 
+    it('passes the roles claim through, keeping only string entries', async () => {
+        const token = await sign({
+            sub: SUBJECT,
+            sid: 'session-1',
+            typ: 'access',
+            roles: ['admin', 42],
+        });
+        const { context, request } = contextFor({
+            headers: { authorization: `Bearer ${token}` } as never,
+        });
+
+        await expect(buildGuard().canActivate(context)).resolves.toBe(true);
+        expect(request.user?.roles).toEqual(['admin']);
+    });
+
     it('attaches the verified identity for a valid access token', async () => {
         const token = await sign({
             sub: SUBJECT,
@@ -117,6 +132,8 @@ describe('AccessGuard', () => {
             sub: SUBJECT,
             sid: 'session-1',
             jti: 'jti-1',
+            // Tokens minted before the claim existed carry no roles.
+            roles: [],
         });
     });
 

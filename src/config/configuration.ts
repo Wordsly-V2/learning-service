@@ -12,6 +12,14 @@ export default () => ({
             10,
         ),
     },
+    // Peer service that owns Wordsly Path items (which ids are published).
+    curriculumService: {
+        host: process.env.CURRICULUM_SERVICE_HOST,
+        timeout: parseInt(
+            process.env.CURRICULUM_SERVICE_HTTP_TIMEOUT ?? '15000',
+            10,
+        ),
+    },
     auth: {
         jwksUri: process.env.AUTH_JWKS_URI,
         issuer: process.env.JWT_ISSUER,

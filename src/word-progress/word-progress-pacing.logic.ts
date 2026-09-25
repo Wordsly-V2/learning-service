@@ -14,6 +14,13 @@ export interface TodayCounts {
     reviews: number;
     /** New words first seen today — a subset of `reviews`, not a separate tally. */
     newWords: number;
+    /**
+     * Wordsly Path items first seen today — a subset of `newWords`. A Path
+     * lesson paces its own introductions, so they are exempt from the daily
+     * new-word limit (which governs the learner's own vocabulary). Their later
+     * reviews share the review limit like any other card.
+     */
+    pathNewWords?: number;
 }
 
 export interface PacingBudget {
@@ -34,11 +41,15 @@ export function computePacingBudget(
     // budgets, and billing a new word to both meant that taking on today's new
     // words silently shrank today's review session by the same number.
     const reviewsUsed = Math.max(0, today.reviews - today.newWords);
+    const vocabNewWords = Math.max(
+        0,
+        today.newWords - (today.pathNewWords ?? 0),
+    );
 
     return {
         newWordsRemainingToday: Math.max(
             0,
-            limits.dailyNewWordLimit - today.newWords,
+            limits.dailyNewWordLimit - vocabNewWords,
         ),
         reviewsRemainingToday: Math.max(
             0,

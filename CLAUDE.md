@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Wordsly learning-progress microservice (NestJS + Prisma + PostgreSQL, port 3003). Owns spaced-repetition scheduling (FSRS), daily habits/streaks, XP/levels, and learning reports. Reached through the gateway, which forwards but does not verify. Two global guards in `src/auth/jwt/`: `AccessGuard` (deny-by-default; `@Public()` or a valid RS256 access token) and `UserScopeGuard` (refuses any request that names a user). Routes carry no user segment — handlers take the id from `@CurrentUser()`, i.e. the token's subject.
+Wordsly learning-progress microservice (NestJS + Prisma + PostgreSQL, port 3003). Owns spaced-repetition scheduling (FSRS), daily habits/streaks, XP/levels, and learning reports. Reached through the gateway, which forwards but does not verify. Global guards in `src/auth/jwt/`: `AccessGuard` (deny-by-default; `@Public()` or a valid RS256 access token), `RolesGuard` (`@Roles('admin')` needs that role in the token's `roles` claim; no-op without the decorator) and `UserScopeGuard` (refuses any request that names a user). Routes carry no user segment — handlers take the id from `@CurrentUser()`, i.e. the token's subject.
 
 It stores `wordId`s that belong to vocabulary-service (no cross-DB FK); orphans are cleaned up by consuming Kafka `WORDS_DELETED_TOPIC` (`src/word-progress/word-progress.consumer.ts`).
+
+**Wordsly Path items share the same cards.** `WordProgress.source` (`VOCAB` | `PATH`, set on create, never changed) says which service a `wordId` belongs to. PATH ids are curriculum-service items (uuidv5, so they cannot collide with vocab ids). At the API it is an optional `source: 'vocab' | 'path'` on each answer and on scope DTOs. It defaults to `vocab`, so offline queues from older clients are unaffected, and a batch may mix both. `POST /word-progress/due-word-ids {source:'path'}` without `wordIds` is the Path review: it filters `source = PATH` in the query instead of taking an id list, and never returns new items, because lessons introduce those. Pacing: Path reviews share `dailyReviewLimit`, but Path items a lesson introduces are exempt from `dailyNewWordLimit`. They are counted in `DailyReviewStat.pathNewWords`, a subset of `newWords` that `computePacingBudget` subtracts.
 
 ## Commands
 
@@ -53,9 +55,15 @@ Streaks/habits: `recordPractice` delegates to `recordPracticeBatch`, so online a
 
 There is **no per-review history table** — only aggregates (`DailyReviewStat`, counters on `WordProgress`). Reports are built from those aggregates; keep new stats incremental, not scan-based (`learning-report.service.ts` is the reference implementation: parallel aggregate queries, bounded row counts).
 
-## Calling vocabulary-service
+## Calling peer services
 
-`WordScopeService` is the only peer dependency at request time, and it forwards **the caller's own access token** — there is no service credential. `src/http-clients/caller-context.ts` holds that token in an `AsyncLocalStorage` store installed by `app.use` in `main.ts`, and the axios request interceptor attaches it.
+There are two peers at request time, both in `src/word-scope/`:
+- `WordScopeService` → vocabulary-service: course and lesson scopes, and word ownership.
+- `CurriculumScopeService` → curriculum-service: `POST /path/items/filter-published`.
+
+`ItemScopeService.filterAccessible` splits the ids by `source` and asks both peers in parallel. It is what guards `record-answer` and the bulk sync. Failures are translated by `peer-call.ts`: a peer outage is a 503, never an empty scope.
+
+Both clients forward **the caller's own access token** — there is no service credential. `src/http-clients/caller-context.ts` holds that token in an `AsyncLocalStorage` store installed by `app.use` in `main.ts`, and the axios request interceptor attaches it.
 
 The consequence to design around: **outside an HTTP request there is nothing to forward**, and the client throws `MissingCallerCredentialError` rather than reaching for something stronger. Cron jobs and Kafka consumers must do their work against this service's own database — which all of them already do.
 

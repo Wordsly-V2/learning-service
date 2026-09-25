@@ -2,6 +2,7 @@
 jest.mock('uuid', () => ({ v7: () => '00000000-0000-7000-8000-000000000000' }));
 
 import { ConflictException } from '@nestjs/common';
+import { ItemSource } from '@prisma/client';
 import { State } from 'ts-fsrs';
 import { AnswerQuality } from './dto/word-progress.dto';
 import { formatClientDate } from '@/daily-habit/daily-habit-date.util';
@@ -153,6 +154,47 @@ describe('WordProgressService.recordAnswersBulk', () => {
         expect(prisma.wordProgress.upsert).toHaveBeenCalledTimes(3);
         expect(result.results).toHaveLength(1);
         expect(result.results[0].wordId).toBe(WORD_A);
+    });
+
+    it('creates each card with the source its answer names, defaulting to vocab', async () => {
+        await service.recordAnswersBulk(USER, {
+            answers: [
+                { wordId: WORD_A, quality: AnswerQuality.PERFECT },
+                {
+                    wordId: WORD_B,
+                    quality: AnswerQuality.PERFECT,
+                    source: 'path',
+                },
+            ],
+        });
+
+        const created = (
+            prisma.wordProgress.upsert.mock.calls as [
+                {
+                    create: { wordId: string; source: ItemSource };
+                    update: Record<string, unknown>;
+                },
+            ][]
+        ).map(([args]) => args);
+        expect(
+            Object.fromEntries(
+                created.map((args) => [args.create.wordId, args.create.source]),
+            ),
+        ).toEqual({ [WORD_A]: ItemSource.VOCAB, [WORD_B]: ItemSource.PATH });
+        // An existing card never changes source.
+        for (const args of created) {
+            expect(args.update).not.toHaveProperty('source');
+        }
+        // Both were first sightings; only the Path one is exempt from the
+        // new-word limit, so it is also counted separately.
+        expect(prisma.dailyReviewStat.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+                create: expect.objectContaining({
+                    newWords: 2,
+                    pathNewWords: 1,
+                }),
+            }),
+        );
     });
 
     it('writes one review-stat row per calendar date with the right deltas', async () => {
@@ -683,5 +725,28 @@ describe('WordProgressService.getDueWordIds', () => {
         // One genuine review today, so five review slots are left — not zero.
         expect(result.pacing?.reviewsRemainingToday).toBe(5);
         expect(result.dueWordIds).toEqual([WORD_A, WORD_B]);
+    });
+
+    it('scopes a Path review by source: no id list, no new items', async () => {
+        const { service, prisma } = buildService({
+            dailyNewWordLimit: 10,
+            dailyReviewLimit: 100,
+        });
+
+        const result = await service.getDueWordIds(
+            USER,
+            { wordIds: [], limit: 20, includeNew: true },
+            ItemSource.PATH,
+        );
+
+        const dueQuery = prisma.wordProgress.findMany.mock.calls
+            .map((call) => call[0] as { where: object; orderBy?: unknown })
+            .find((args) => args.orderBy);
+        expect(dueQuery?.where).toMatchObject({ source: ItemSource.PATH });
+        expect(dueQuery?.where).not.toHaveProperty('wordId');
+        expect(result.dueWordIds).toEqual([WORD_A, WORD_B]);
+        // Path items are introduced by lessons, never by the review queue.
+        expect(result.newWordIds).toEqual([]);
+        expect(result.newTotal).toBe(0);
     });
 });

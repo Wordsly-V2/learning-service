@@ -1,14 +1,7 @@
 import { VOCABULARY_SERVICE_HTTP } from '@/http-clients/http-clients.module';
-import {
-    ForbiddenException,
-    Inject,
-    Injectable,
-    InternalServerErrorException,
-    Logger,
-    ServiceUnavailableException,
-    UnauthorizedException,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { AxiosInstance } from 'axios';
+import { callPeer } from './peer-call';
 
 export interface WordScopeGroup {
     wordIds: string[];
@@ -22,10 +15,8 @@ export interface WordScopeGroup {
  * become a plain proxy. Now the service that owns the response resolves the
  * scope itself.
  *
- * This is the one place learning-service depends on a peer at request time, so
- * failures are translated rather than leaked: a vocabulary outage is a 503, not
- * an opaque 500 or an empty result set. Returning empty would be worse than
- * failing — a practice session would silently look finished.
+ * Failures are translated by `callPeer`: a vocabulary outage is a 503, never an
+ * empty scope.
  *
  * None of these methods takes a user id. The request carries the caller's own
  * access token (see `http-clients/caller-context.ts`) and vocabulary-service
@@ -115,46 +106,10 @@ export class WordScopeService {
         }));
     }
 
-    private async call<T>(
+    private call<T>(
         request: () => Promise<{ data: T }>,
         what: string,
     ): Promise<T> {
-        try {
-            const { data } = await request();
-            return data;
-        } catch (error) {
-            const status = (error as { response?: { status?: number } })
-                ?.response?.status;
-
-            this.logger.error(
-                `Failed to ${what} via vocabulary-service (status=${status ?? 'none'})`,
-            );
-
-            // No response at all, or the peer itself is unavailable: the work
-            // could not be done, and saying so beats returning a plausible-
-            // looking empty scope that reads as "nothing left to practise".
-            if (!status || status >= 500) {
-                throw new ServiceUnavailableException(
-                    'Word scopes are temporarily unavailable',
-                );
-            }
-
-            // The peer rejected the forwarded token. Report that as itself
-            // rather than as a 500: an expired token mid-session is an ordinary
-            // thing the client knows how to recover from by refreshing, and
-            // burying it in a server error would make it look like our bug.
-            if (status === 401) {
-                throw new UnauthorizedException(
-                    'Access token was rejected by vocabulary-service',
-                );
-            }
-            if (status === 403) {
-                throw new ForbiddenException(
-                    'Not allowed to read these word scopes',
-                );
-            }
-
-            throw new InternalServerErrorException(`Failed to ${what}`);
-        }
+        return callPeer(this.logger, 'vocabulary-service', what, request);
     }
 }

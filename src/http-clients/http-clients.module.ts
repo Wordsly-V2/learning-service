@@ -9,60 +9,65 @@ import {
 } from '@/http-clients/caller-context';
 
 export const VOCABULARY_SERVICE_HTTP = 'VOCABULARY_SERVICE_HTTP';
+export const CURRICULUM_SERVICE_HTTP = 'CURRICULUM_SERVICE_HTTP';
 
 /**
- * Peer-service HTTP client.
+ * Peer-service HTTP clients.
  *
  * Authenticated with the **caller's own access token**, forwarded per request.
  * It used to carry a shared internal token set once at boot, which every
  * service's guards accepted as proof of being a peer and which therefore
  * skipped the per-user checks entirely — one leaked value could act as any
- * learner on any route. Forwarding the caller's token instead means
- * vocabulary-service verifies it and applies exactly the checks it would for a
- * browser, so this service can never reach further than the user it is serving.
+ * learner on any route. Forwarding the caller's token instead means the peer
+ * verifies it and applies exactly the checks it would for a browser, so this
+ * service can never reach further than the user it is serving.
  *
  * The credential comes from an AsyncLocalStorage store rather than being passed
  * down through every call, so a peer call outside a request fails loudly
  * instead of silently borrowing something stronger.
  */
+function peerClientProvider(token: string, configPrefix: string) {
+    return {
+        provide: token,
+        inject: [ConfigService],
+        useFactory: (configService: ConfigService) => {
+            const instance = axios.create({
+                baseURL: configService.get<string>(`${configPrefix}.host`),
+                timeout:
+                    configService.get<number>(`${configPrefix}.timeout`) ??
+                    15_000,
+                httpAgent: new HttpAgent({
+                    keepAlive: true,
+                    maxSockets: 100,
+                }),
+                httpsAgent: new HttpsAgent({
+                    keepAlive: true,
+                    maxSockets: 100,
+                }),
+            });
+
+            instance.interceptors.request.use((config) => {
+                const authorization = getCallerAuthorization();
+                if (!authorization) {
+                    throw new MissingCallerCredentialError();
+                }
+                config.headers.set('Authorization', authorization);
+                return config;
+            });
+
+            return instance;
+        },
+    };
+}
+
 @Global()
 @Module({
     providers: [
-        {
-            provide: VOCABULARY_SERVICE_HTTP,
-            inject: [ConfigService],
-            useFactory: (configService: ConfigService) => {
-                const instance = axios.create({
-                    baseURL: configService.get<string>(
-                        'vocabularyService.host',
-                    ),
-                    timeout:
-                        configService.get<number>(
-                            'vocabularyService.timeout',
-                        ) ?? 15_000,
-                    httpAgent: new HttpAgent({
-                        keepAlive: true,
-                        maxSockets: 100,
-                    }),
-                    httpsAgent: new HttpsAgent({
-                        keepAlive: true,
-                        maxSockets: 100,
-                    }),
-                });
-
-                instance.interceptors.request.use((config) => {
-                    const authorization = getCallerAuthorization();
-                    if (!authorization) {
-                        throw new MissingCallerCredentialError();
-                    }
-                    config.headers.set('Authorization', authorization);
-                    return config;
-                });
-
-                return instance;
-            },
-        },
+        // Word scopes: which words are in a learner's course/lesson.
+        peerClientProvider(VOCABULARY_SERVICE_HTTP, 'vocabularyService'),
+        // Wordsly Path: which curriculum items are published.
+        peerClientProvider(CURRICULUM_SERVICE_HTTP, 'curriculumService'),
     ],
-    exports: [VOCABULARY_SERVICE_HTTP],
+    exports: [VOCABULARY_SERVICE_HTTP, CURRICULUM_SERVICE_HTTP],
 })
 export class HttpClientsModule {}

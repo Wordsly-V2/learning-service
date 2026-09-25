@@ -67,6 +67,7 @@ export class AccessGuard implements CanActivate {
             sub: payload.sub,
             sid: payload.sid,
             jti: payload.jti,
+            roles: payload.roles,
         };
         return true;
     }
@@ -75,6 +76,7 @@ export class AccessGuard implements CanActivate {
         sub: string;
         sid: string;
         jti: string;
+        roles: string[];
     }> {
         try {
             const { payload } = await jwtVerify(token, this.jwks, {
@@ -100,6 +102,7 @@ export class AccessGuard implements CanActivate {
                 sub,
                 sid: (payload.sid as string | undefined) ?? '',
                 jti: payload.jti ?? '',
+                roles: readRoles(payload.roles),
             };
         } catch (error) {
             if (error instanceof UnauthorizedException) throw error;
@@ -142,6 +145,15 @@ const TOKEN_REJECTION_CODES = new Set([
 function isTokenRejection(error: unknown): boolean {
     const code = (error as { code?: string })?.code;
     return typeof code === 'string' && TOKEN_REJECTION_CODES.has(code);
+}
+
+/**
+ * The `roles` claim, keeping only string entries. Tokens minted before the
+ * claim existed have none, which reads as no roles rather than an error.
+ */
+function readRoles(claim: unknown): string[] {
+    if (!Array.isArray(claim)) return [];
+    return claim.filter((role): role is string => typeof role === 'string');
 }
 
 function readBearerToken(request: AuthenticatedRequest): string | null {

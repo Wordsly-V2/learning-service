@@ -2,6 +2,7 @@ import { AxiosHeaders } from 'axios';
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import {
+    CURRICULUM_SERVICE_HTTP,
     HttpClientsModule,
     VOCABULARY_SERVICE_HTTP,
 } from '@/http-clients/http-clients.module';
@@ -16,12 +17,20 @@ import {
  * checks entirely. It now forwards the caller's own token, per request, and has
  * nothing to fall back on.
  */
-describe('vocabulary service HTTP client', () => {
+describe.each([
+    [
+        VOCABULARY_SERVICE_HTTP,
+        'vocabularyService',
+        'http://vocabulary-service:3002',
+    ],
+    [
+        CURRICULUM_SERVICE_HTTP,
+        'curriculumService',
+        'http://curriculum-service:3004',
+    ],
+])('%s peer client', (token, configPrefix, host) => {
     const config = {
-        get: (key: string) =>
-            key === 'vocabularyService.host'
-                ? 'http://vocabulary-service:3002'
-                : 15_000,
+        get: (key: string) => (key === `${configPrefix}.host` ? host : 15_000),
     } as unknown as ConfigService;
 
     const build = (): AxiosInstance => {
@@ -33,9 +42,7 @@ describe('vocabulary service HTTP client', () => {
             useFactory: (c: ConfigService) => AxiosInstance;
         }[];
 
-        const provider = providers.find(
-            (p) => p.provide === VOCABULARY_SERVICE_HTTP,
-        );
+        const provider = providers.find((p) => p.provide === token);
         if (!provider) throw new Error('client provider not registered');
         return provider.useFactory(config);
     };
@@ -56,6 +63,10 @@ describe('vocabulary service HTTP client', () => {
             headers: new AxiosHeaders(),
         } as InternalAxiosRequestConfig);
     };
+
+    it('targets its own peer', () => {
+        expect(build().defaults.baseURL).toBe(host);
+    });
 
     it('sends no shared credential of its own', () => {
         expect(JSON.stringify(build().defaults.headers)).not.toContain(

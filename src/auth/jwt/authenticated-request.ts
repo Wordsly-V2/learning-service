@@ -8,6 +8,11 @@ export interface AuthenticatedUser {
     sid: string;
     /** This access token's own id. */
     jti: string;
+    /**
+     * Authorization roles from the token's `roles` claim (e.g. `admin`). Empty
+     * for tokens minted before the claim existed. Checked by RolesGuard.
+     */
+    roles: string[];
 }
 
 export interface AuthenticatedRequest extends Request {

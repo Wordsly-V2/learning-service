@@ -6,12 +6,23 @@ datasource db {
   provider = "postgresql"
 }
 
+// Where a card's item lives. VOCAB: a word in the learner's own
+// vocabulary-service library. PATH: a Wordsly Path item in curriculum-service
+// (uuidv5 ids, so the two id spaces never collide).
+enum ItemSource {
+  VOCAB
+  PATH
+}
+
 // Spaced repetition tracking (FSRS via ts-fsrs).
-// wordId references vocabulary-service words (no cross-DB FK).
+// wordId references a vocabulary-service word or, when source = PATH, a
+// curriculum-service item (no cross-DB FK either way).
 model WordProgress {
-  id          String @id @db.Uuid
-  wordId      String @db.Uuid
-  userLoginId String @db.Uuid
+  id          String     @id @db.Uuid
+  wordId      String     @db.Uuid
+  userLoginId String     @db.Uuid
+  // Set on create and never changed: an id belongs to exactly one service.
+  source      ItemSource @default(VOCAB)
 
   easeFactor  Float @default(2.5) // FSRS difficulty
   interval    Int   @default(0) // scheduled days until next review
@@ -53,6 +64,7 @@ model WordProgress {
   @@unique([wordId, userLoginId])
   @@index([userLoginId, nextReviewAt])
   @@index([userLoginId, isLeech])
+  @@index([userLoginId, source, nextReviewAt])
   @@index([wordId])
   @@map("word_progress")
 }
@@ -98,6 +110,9 @@ model DailyReviewStat {
   reviews        Int      @default(0) // total answers recorded that day
   correctReviews Int      @default(0) @map("correct_reviews")
   newWords       Int      @default(0) @map("new_words") // words first seen that day
+  // Subset of newWords: Wordsly Path items introduced that day. A lesson paces
+  // its own intros, so these do not spend the daily new-word budget.
+  pathNewWords   Int      @default(0) @map("path_new_words")
 
   @@id([userLoginId, reviewDate])
   @@index([userLoginId, reviewDate(sort: Desc)])
