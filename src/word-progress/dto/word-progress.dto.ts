@@ -5,6 +5,7 @@ import {
     IsArray,
     IsBoolean,
     IsEnum,
+    IsIn,
     IsInt,
     IsISO8601,
     IsOptional,
@@ -16,7 +17,28 @@ import {
     ValidateNested,
 } from 'class-validator';
 import { IsClientDate } from '@/daily-habit/daily-habit-date.util';
+import {
+    ITEM_SOURCE_PARAMS,
+    type ItemSourceParam,
+} from '@/word-scope/item-source';
 
+/** Shared `source` field: which service the id belongs to. */
+function ItemSourceField(description: string): PropertyDecorator {
+    return (target, key) => {
+        ApiPropertyOptional({
+            description,
+            enum: ITEM_SOURCE_PARAMS,
+            default: 'vocab',
+        })(target, key);
+        IsOptional()(target, key);
+        IsIn(ITEM_SOURCE_PARAMS)(target, key);
+    };
+}
+
+const ANSWER_SOURCE_DOC =
+    "Where the item lives: 'vocab' (the learner's own word, the default) or 'path' (a published Wordsly Path item).";
+const SCOPE_SOURCE_DOC =
+    "'path' scopes to the learner's Wordsly Path cards when wordIds is omitted (courseId/lessonId are then ignored). Defaults to 'vocab'.";
 
 /**
  * Quality rating for spaced repetition (mapped to FSRS grades)
@@ -61,6 +83,9 @@ export class RecordAnswerDto {
     @IsString()
     @IsClientDate()
     clientDate?: string;
+
+    @ItemSourceField(ANSWER_SOURCE_DOC)
+    source?: ItemSourceParam;
 }
 
 export class BulkAnswerItemDto {
@@ -87,6 +112,9 @@ export class BulkAnswerItemDto {
     @IsOptional()
     @IsISO8601({ strict: true })
     reviewedAt?: string;
+
+    @ItemSourceField(ANSWER_SOURCE_DOC)
+    source?: ItemSourceParam;
 }
 
 /** Max answers per bulk practice session save. */
@@ -174,6 +202,9 @@ export class GetDueWordIdsDto {
     @IsOptional()
     @IsUUID()
     lessonId?: string;
+
+    @ItemSourceField(SCOPE_SOURCE_DOC)
+    source?: ItemSourceParam;
 
     @ApiPropertyOptional({
         description:
@@ -485,6 +516,9 @@ export class LeechWordIdsDto {
     @IsOptional()
     @IsUUID()
     lessonId?: string;
+
+    @ItemSourceField(SCOPE_SOURCE_DOC)
+    source?: ItemSourceParam;
 }
 
 export class LeechItemDto {
@@ -607,6 +641,9 @@ export class StatsByWordIdsDto {
     @IsOptional()
     @IsUUID()
     lessonId?: string;
+
+    @ItemSourceField(SCOPE_SOURCE_DOC)
+    source?: ItemSourceParam;
 }
 
 export class ScopeWordIdsDto {

@@ -1,6 +1,7 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { WordProgress } from '@prisma/client';
+import { ItemSource, WordProgress } from '@prisma/client';
+import { toItemSource } from '@/word-scope/item-source';
 import { v7 as uuidv7 } from 'uuid';
 import {
     AnswerQuality,
@@ -62,6 +63,8 @@ interface ReviewStatDelta {
     reviews: number;
     correctReviews: number;
     newWords: number;
+    /** Subset of newWords that are Wordsly Path items (see pacing logic). */
+    pathNewWords: number;
 }
 
 function getOrInitDelta(
@@ -76,6 +79,7 @@ function getOrInitDelta(
         reviews: 0,
         correctReviews: 0,
         newWords: 0,
+        pathNewWords: 0,
     };
     byDate.set(date, created);
     return created;
@@ -172,6 +176,7 @@ export class WordProgressService {
         existing: WordProgress | null,
         reviewedAt: Date,
         leechConfig: { threshold: number; autoSuspend: boolean },
+        source: ItemSource,
     ): Promise<WordProgress> {
         const isCorrect = quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY;
         const where = {
@@ -253,6 +258,8 @@ export class WordProgressService {
                 id: uuidv7(),
                 wordId,
                 userLoginId,
+                // Only on create: an id belongs to one service for good.
+                source,
                 easeFactor,
                 interval,
                 repetitions,
@@ -302,7 +309,7 @@ export class WordProgressService {
         tx: Prisma.TransactionClient,
         userLoginId: string,
         reviewDate: Date,
-        delta: { reviews: number; correctReviews: number; newWords: number },
+        delta: ReviewStatDelta,
     ): Promise<void> {
         if (delta.reviews <= 0) {
             return;
@@ -317,11 +324,13 @@ export class WordProgressService {
                 reviews: delta.reviews,
                 correctReviews: delta.correctReviews,
                 newWords: delta.newWords,
+                pathNewWords: delta.pathNewWords,
             },
             update: {
                 reviews: { increment: delta.reviews },
                 correctReviews: { increment: delta.correctReviews },
                 newWords: { increment: delta.newWords },
+                pathNewWords: { increment: delta.pathNewWords },
             },
         });
     }
@@ -395,7 +404,8 @@ export class WordProgressService {
     async recordAnswer(
         recordAnswerDto: RecordAnswerDto & { userLoginId: string },
     ): Promise<WordProgressResponseDto> {
-        const { wordId, quality, userLoginId, clientDate } = recordAnswerDto;
+        const { wordId, quality, userLoginId, clientDate, source } =
+            recordAnswerDto;
         const now = new Date();
         // Same clamp and same XP cap as the bulk path — otherwise the single
         // endpoint is a way around both.
@@ -423,12 +433,14 @@ export class WordProgressService {
                     threshold: settings.leechThreshold,
                     autoSuspend: settings.leechAutoSuspend,
                 },
+                toItemSource(source),
             );
             const delta: ReviewStatDelta = {
                 reviews: 1,
                 correctReviews:
                     quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
                 newWords: existing === null ? 1 : 0,
+                pathNewWords: existing === null && source === 'path' ? 1 : 0,
             };
             await this.recordReviewStat(tx, userLoginId, reviewDate, delta);
             // A word pays out at most once a day, however many times it is
@@ -525,6 +537,15 @@ export class WordProgressService {
         }
 
         const wordIds = [...new Set(answers.map((answer) => answer.wordId))];
+        // Read from the request rather than threaded through the replay batch:
+        // an id belongs to one service, so its source is the same on every
+        // answer for it.
+        const sourceByWordId = new Map(
+            body.answers.map((answer) => [
+                answer.wordId,
+                toItemSource(answer.source),
+            ]),
+        );
         const settings =
             await this.learningSettingsService.getSettings(userLoginId);
         const priorReviewsByDate = await this.readPriorReviewCounts(
@@ -590,6 +611,7 @@ export class WordProgressService {
                             threshold: settings.leechThreshold,
                             autoSuspend: settings.leechAutoSuspend,
                         },
+                        sourceByWordId.get(answer.wordId) ?? ItemSource.VOCAB,
                     );
 
                     // Chain the state so the NEXT review of this word in the
@@ -614,6 +636,12 @@ export class WordProgressService {
                     // multi-day batch counts as new on day 1 and nowhere else.
                     if (prior === null) {
                         delta.newWords++;
+                        if (
+                            sourceByWordId.get(answer.wordId) ===
+                            ItemSource.PATH
+                        ) {
+                            delta.pathNewWords++;
+                        }
                     }
 
                     const payKey = `${answer.reviewDate}|${answer.wordId}`;
@@ -697,9 +725,20 @@ export class WordProgressService {
         );
     }
 
+    /**
+     * Due and new ids for a practice session.
+     *
+     * The scope is either an id list (a course, lesson or explicit selection) or,
+     * with `sourceScope`, every card the learner holds from one source. The
+     * Wordsly Path review uses the latter: it spans the whole path, so listing
+     * the ids would mean shipping thousands of them into an `IN (...)`. A source
+     * scope has no new items (a Path item is introduced by its lesson, never by
+     * the review queue), so `includeNew` does not apply to it.
+     */
     async getDueWordIds(
         userLoginId: string,
         query: GetDueWordIdsDto,
+        sourceScope?: ItemSource,
     ): Promise<DueWordIdsResponseDto> {
         const {
             // The controller resolves the scope before calling, so a list is
@@ -707,9 +746,12 @@ export class WordProgressService {
             wordIds = [],
             limit = 20,
             newLimit,
-            includeNew = true,
             clientDate,
         } = query;
+        const includeNew = sourceScope ? false : (query.includeNew ?? true);
+        const inScope: Prisma.WordProgressWhereInput = sourceScope
+            ? { source: sourceScope }
+            : { wordId: { in: wordIds } };
 
         // Resolve today's pacing budget from settings + what's been done today.
         const now = new Date();
@@ -720,7 +762,7 @@ export class WordProgressService {
                 where: {
                     userLoginId_reviewDate: { userLoginId, reviewDate },
                 },
-                select: { reviews: true, newWords: true },
+                select: { reviews: true, newWords: true, pathNewWords: true },
             }),
         ]);
         const budget = computePacingBudget(
@@ -731,10 +773,11 @@ export class WordProgressService {
             {
                 reviews: todayStat?.reviews ?? 0,
                 newWords: todayStat?.newWords ?? 0,
+                pathNewWords: todayStat?.pathNewWords ?? 0,
             },
         );
 
-        if (wordIds.length === 0) {
+        if (!sourceScope && wordIds.length === 0) {
             return {
                 wordIds: [],
                 dueWordIds: [],
@@ -752,16 +795,19 @@ export class WordProgressService {
         // a second round trip, and it is the same snapshot the due query runs
         // against, so the two halves of the session cannot disagree.
         const [progressRows, dueTotal] = await Promise.all([
-            this.prisma.wordProgress.findMany({
-                where: { userLoginId, wordId: { in: wordIds } },
-                select: { wordId: true },
-            }),
+            // Only needed to find new ids, which a source scope never has.
+            sourceScope
+                ? Promise.resolve<{ wordId: string }[]>([])
+                : this.prisma.wordProgress.findMany({
+                      where: { userLoginId, wordId: { in: wordIds } },
+                      select: { wordId: true },
+                  }),
             this.prisma.wordProgress.count({
                 where: {
                     userLoginId,
                     nextReviewAt: { lte: now },
                     suspendedAt: null,
-                    wordId: { in: wordIds },
+                    ...inScope,
                 },
             }),
         ]);
@@ -783,7 +829,7 @@ export class WordProgressService {
                           userLoginId,
                           nextReviewAt: { lte: now },
                           suspendedAt: null,
-                          wordId: { in: wordIds },
+                          ...inScope,
                       },
                       select: { wordId: true },
                       orderBy: [{ nextReviewAt: 'asc' }, { wordId: 'asc' }],
@@ -814,6 +860,21 @@ export class WordProgressService {
             newTotal,
             pacing: budget,
         };
+    }
+
+    /**
+     * Ids of every card the learner holds from one source, for scope-wide reads
+     * (Path stats and leeches). Bounded by what one learner can have studied.
+     */
+    async getCardIdsBySource(
+        userLoginId: string,
+        source: ItemSource,
+    ): Promise<string[]> {
+        const rows = await this.prisma.wordProgress.findMany({
+            where: { userLoginId, source },
+            select: { wordId: true },
+        });
+        return rows.map((row) => row.wordId);
     }
 
     /** Leech cards within a scope, most-lapsed first. */

@@ -34,6 +34,9 @@ import {
     StatsByCourseIdsDto,
     StatsByLessonIdsDto,
 } from './dto/word-progress.dto';
+import { ItemSource } from '@prisma/client';
+import { ItemScopeService } from '@/word-scope/item-scope.service';
+import type { ItemSourceParam } from '@/word-scope/item-source';
 import { WordScopeService } from '@/word-scope/word-scope.service';
 import { WordProgressService } from './word-progress.service';
 import { CurrentUser } from '@/auth/jwt/current-user.decorator';
@@ -44,6 +47,7 @@ export class WordProgressController {
     constructor(
         private readonly wordProgressService: WordProgressService,
         private readonly wordScopeService: WordScopeService,
+        private readonly itemScopeService: ItemScopeService,
     ) {}
 
     /**
@@ -53,13 +57,27 @@ export class WordProgressController {
      * the scope resolved from vocabulary-service. An explicit list always wins:
      * the offline client already holds its own word ids and must not have them
      * silently replaced by a server-side lookup.
+     *
+     * `source: 'path'` without a list means every Wordsly Path card the learner
+     * holds. That comes from this service's own rows: curriculum-service knows
+     * which items exist, but only this database knows which ones were studied.
      */
-    private async resolveWordIds(body: {
-        wordIds?: string[];
-        courseId?: string;
-        lessonId?: string;
-    }): Promise<string[]> {
+    private async resolveWordIds(
+        userLoginId: string,
+        body: {
+            wordIds?: string[];
+            courseId?: string;
+            lessonId?: string;
+            source?: ItemSourceParam;
+        },
+    ): Promise<string[]> {
         if (body.wordIds) return body.wordIds;
+        if (body.source === 'path') {
+            return this.wordProgressService.getCardIdsBySource(
+                userLoginId,
+                ItemSource.PATH,
+            );
+        }
 
         return this.wordScopeService.getScopedWordIds(
             body.courseId,
@@ -85,11 +103,11 @@ export class WordProgressController {
     ): Promise<WordProgressResponseDto> {
         // Progress rows carry no ownership of their own, so without this any
         // uuid would mint a "new word" and pay out XP for vocabulary the
-        // learner never had.
-        const owned = await this.wordScopeService.filterOwnedWordIds([
-            recordAnswerDto.wordId,
+        // learner never had (or for a Path item that was never published).
+        const accessible = await this.itemScopeService.filterAccessible([
+            { id: recordAnswerDto.wordId, source: recordAnswerDto.source },
         ]);
-        if (!owned.has(recordAnswerDto.wordId)) {
+        if (!accessible.has(recordAnswerDto.wordId)) {
             throw new NotFoundException('Word not found');
         }
 
@@ -118,15 +136,21 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() body: BulkRecordAnswersDto,
     ): Promise<BulkRecordAnswersResponseDto> {
-        // Unowned answers are dropped rather than failing the batch: an offline
-        // session can legitimately hold answers for a word deleted since, and
-        // rejecting the whole flush would strand every other answer in it.
-        const owned = await this.wordScopeService.filterOwnedWordIds(
-            body.answers.map((answer) => answer.wordId),
+        // Inaccessible answers are dropped rather than failing the batch: an
+        // offline session can legitimately hold answers for a word deleted (or a
+        // Path item archived) since, and rejecting the whole flush would strand
+        // every other answer in it.
+        const accessible = await this.itemScopeService.filterAccessible(
+            body.answers.map((answer) => ({
+                id: answer.wordId,
+                source: answer.source,
+            })),
         );
         return this.wordProgressService.recordAnswersBulk(userLoginId, {
             ...body,
-            answers: body.answers.filter((answer) => owned.has(answer.wordId)),
+            answers: body.answers.filter((answer) =>
+                accessible.has(answer.wordId),
+            ),
         });
     }
 
@@ -146,7 +170,16 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() body: GetDueWordIdsDto,
     ): Promise<DueWordIdsResponseDto> {
-        const wordIds = await this.resolveWordIds(body);
+        // The Path review spans every Path card, so it is scoped by source in
+        // the query itself instead of by a (possibly huge) id list.
+        if (body.source === 'path' && !body.wordIds) {
+            return this.wordProgressService.getDueWordIds(
+                userLoginId,
+                { ...body, wordIds: [] },
+                ItemSource.PATH,
+            );
+        }
+        const wordIds = await this.resolveWordIds(userLoginId, body);
         return this.wordProgressService.getDueWordIds(userLoginId, {
             ...body,
             wordIds,
@@ -165,7 +198,7 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() body: LeechWordIdsDto,
     ): Promise<LeechesResponseDto> {
-        const wordIds = await this.resolveWordIds(body);
+        const wordIds = await this.resolveWordIds(userLoginId, body);
         return this.wordProgressService.getLeeches(userLoginId, wordIds);
     }
 
@@ -280,7 +313,7 @@ export class WordProgressController {
         @CurrentUser() userLoginId: string,
         @Body() body: StatsByWordIdsDto,
     ): Promise<WordProgressStatsDto> {
-        const wordIds = await this.resolveWordIds(body);
+        const wordIds = await this.resolveWordIds(userLoginId, body);
         return this.wordProgressService.getProgressStats(userLoginId, wordIds);
     }
 

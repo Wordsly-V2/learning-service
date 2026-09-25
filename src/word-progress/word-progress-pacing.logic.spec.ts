@@ -23,6 +23,18 @@ describe('computePacingBudget', () => {
         expect(budget.reviewsRemainingToday).toBe(13);
         expect(budget.newWordsRemainingToday).toBe(5);
     });
+
+    it('does not bill Wordsly Path lesson intros to the new-word limit', () => {
+        // 20 answers, 12 of them first sightings: 10 Path items a lesson
+        // introduced and 2 of the learner's own words.
+        const budget = computePacingBudget(
+            { dailyNewWordLimit: 10, dailyReviewLimit: 100 },
+            { reviews: 20, newWords: 12, pathNewWords: 10 },
+        );
+        expect(budget.newWordsRemainingToday).toBe(8);
+        // Intros are still first sightings, not reviews: 8 genuine reviews.
+        expect(budget.reviewsRemainingToday).toBe(92);
+    });
 });
 
 describe('reviewTake / newWordTake', () => {
