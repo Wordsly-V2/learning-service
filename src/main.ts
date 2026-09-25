@@ -9,6 +9,8 @@ import { runWithCaller } from '@/http-clients/caller-context';
 import helmet from 'helmet';
 import { requestIdMiddleware } from '@/common/request-id.middleware';
 import { RequestContextLogger } from '@/common/request-context-logger';
+import { CONSUMED_TOPICS } from '@/messaging/constants';
+import { ensureTopics } from '@/messaging/ensure-topics';
 
 const bootLogger = new Logger('Bootstrap');
 
@@ -92,6 +94,12 @@ async function bootstrap() {
         ca || cert || key ? { rejectUnauthorized: true, ca, cert, key } : false;
 
     if (brokerList.length > 0) {
+        await ensureTopics({
+            brokers: brokerList,
+            ssl: kafkaSsl,
+            topics: CONSUMED_TOPICS,
+            logger: bootLogger,
+        });
         app.connectMicroservice({
             transport: Transport.KAFKA,
             options: {

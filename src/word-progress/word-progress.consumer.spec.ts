@@ -2,6 +2,7 @@ jest.mock('uuid', () => ({ v7: () => '00000000-0000-7000-8000-000000000000' }));
 
 import { KafkaContext } from '@nestjs/microservices';
 import {
+    parsePathItemsRetiredPayload,
     parseWordDeletedPayload,
     WordProgressConsumer,
 } from './word-progress.consumer';
@@ -74,6 +75,50 @@ describe('WordProgressConsumer', () => {
             ).toHaveBeenCalledWith([id]);
             expect(savedWordService.deleteForWords).toHaveBeenCalledWith([id]);
             expect(commitOffsets).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('handlePathItemsRetired', () => {
+        const commitOffsets = jest.fn().mockResolvedValue(undefined);
+        const context = {
+            getMessage: () => ({ offset: '3', value: Buffer.from('{}') }),
+            getConsumer: () => ({ commitOffsets }),
+            getTopic: () => 'path_items_retired',
+            getPartition: () => 0,
+        } as unknown as KafkaContext;
+        let deletePathProgressForItems: jest.Mock;
+        let consumer: WordProgressConsumer;
+
+        beforeEach(() => {
+            commitOffsets.mockClear();
+            deletePathProgressForItems = jest.fn().mockResolvedValue(undefined);
+            consumer = new WordProgressConsumer(
+                { deletePathProgressForItems } as never,
+                { deleteForWords: jest.fn() } as never,
+            );
+        });
+
+        it('parses only a non-empty uuid list under itemIds', () => {
+            expect(parsePathItemsRetiredPayload({ itemIds: [id] })).toEqual([
+                id,
+            ]);
+            expect(parsePathItemsRetiredPayload({ wordIds: [id] })).toBeNull();
+            expect(parsePathItemsRetiredPayload({ itemIds: [] })).toBeNull();
+            expect(parsePathItemsRetiredPayload({ itemIds: ['x'] })).toBeNull();
+        });
+
+        it('drops Path progress for the items, then commits', async () => {
+            await consumer.handlePathItemsRetired({ itemIds: [id] }, context);
+            expect(deletePathProgressForItems).toHaveBeenCalledWith([id]);
+            expect(commitOffsets).toHaveBeenCalledWith([
+                { topic: 'path_items_retired', partition: 0, offset: '4' },
+            ]);
+        });
+
+        it('commits a malformed message without deleting anything', async () => {
+            await consumer.handlePathItemsRetired({ itemIds: 'all' }, context);
+            expect(deletePathProgressForItems).not.toHaveBeenCalled();
+            expect(commitOffsets).toHaveBeenCalled();
         });
     });
 });

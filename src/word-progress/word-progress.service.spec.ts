@@ -750,3 +750,30 @@ describe('WordProgressService.getDueWordIds', () => {
         expect(result.newTotal).toBe(0);
     });
 });
+
+describe('WordProgressService.deletePathProgressForItems', () => {
+    const build = () => {
+        const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+        const service = new WordProgressService(
+            { wordProgress: { deleteMany } } as never,
+            {} as never,
+            {} as never,
+            {} as never,
+        );
+        return { service, deleteMany };
+    };
+
+    it('deletes only Path cards for the items', async () => {
+        const { service, deleteMany } = build();
+        await service.deletePathProgressForItems([WORD_A]);
+        expect(deleteMany).toHaveBeenCalledWith({
+            where: { wordId: { in: [WORD_A] }, source: 'PATH' },
+        });
+    });
+
+    it('never runs an unfiltered delete for an empty list', async () => {
+        const { service, deleteMany } = build();
+        await service.deletePathProgressForItems([]);
+        expect(deleteMany).not.toHaveBeenCalled();
+    });
+});

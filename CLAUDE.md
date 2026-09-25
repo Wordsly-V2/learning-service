@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Wordsly learning-progress microservice (NestJS + Prisma + PostgreSQL, port 3003). Owns spaced-repetition scheduling (FSRS), daily habits/streaks, XP/levels, and learning reports. Reached through the gateway, which forwards but does not verify. Global guards in `src/auth/jwt/`: `AccessGuard` (deny-by-default; `@Public()` or a valid RS256 access token), `RolesGuard` (`@Roles('admin')` needs that role in the token's `roles` claim; no-op without the decorator) and `UserScopeGuard` (refuses any request that names a user). Routes carry no user segment — handlers take the id from `@CurrentUser()`, i.e. the token's subject.
 
-It stores `wordId`s that belong to vocabulary-service (no cross-DB FK); orphans are cleaned up by consuming Kafka `WORDS_DELETED_TOPIC` (`src/word-progress/word-progress.consumer.ts`).
+It stores `wordId`s that belong to vocabulary-service (no cross-DB FK); orphans are cleaned up by consuming Kafka `WORDS_DELETED_TOPIC` (`src/word-progress/word-progress.consumer.ts`). Wordsly Path items retired by a curriculum-service release arrive on `PATH_ITEMS_RETIRED_TOPIC` (`{ itemIds }`) and only their `source = PATH` progress is deleted. Both payloads are parsed strictly (non-empty uuid list) because the ids feed a cross-user `deleteMany`.
 
 **Wordsly Path items share the same cards.** `WordProgress.source` (`VOCAB` | `PATH`, set on create, never changed) says which service a `wordId` belongs to. PATH ids are curriculum-service items (uuidv5, so they cannot collide with vocab ids). At the API it is an optional `source: 'vocab' | 'path'` on each answer and on scope DTOs. It defaults to `vocab`, so offline queues from older clients are unaffected, and a batch may mix both. `POST /word-progress/due-word-ids {source:'path'}` without `wordIds` is the Path review: it filters `source = PATH` in the query instead of taking an id list, and never returns new items, because lessons introduce those. Pacing: Path reviews share `dailyReviewLimit`, but Path items a lesson introduces are exempt from `dailyNewWordLimit`. They are counted in `DailyReviewStat.pathNewWords`, a subset of `newWords` that `computePacingBudget` subtracts.
 
@@ -23,7 +23,7 @@ npx prisma migrate dev     # create/apply migrations
 npm run backfill:user-level  # one-off XP backfill script
 ```
 
-Config through `src/config/configuration.ts`; env validated at boot. The Kafka microservice only starts when `KAFKA_BROKERS` is set; consumers use `autoCommit: false` and must commit manually.
+Config through `src/config/configuration.ts`; env validated at boot. The Kafka microservice only starts when `KAFKA_BROKERS` is set; consumers use `autoCommit: false` and must commit manually. Before the consumer subscribes, `ensureTopics` (`src/messaging/ensure-topics.ts`) creates any missing topic in `CONSUMED_TOPICS` and waits for its leader, which is what used to crash a fresh stack with UNKNOWN_TOPIC_OR_PARTITION; add every new consumed topic to that list.
 
 ## The FSRS scheduler — read this before touching word-progress
 

@@ -1,4 +1,7 @@
-import { WORDS_DELETED_TOPIC } from '@/messaging/constants';
+import {
+    PATH_ITEMS_RETIRED_TOPIC,
+    WORDS_DELETED_TOPIC,
+} from '@/messaging/constants';
 import {
     commitCurrentMessage,
     consumeWithRetry,
@@ -26,13 +29,24 @@ export interface WordDeletedPayload {
  * so a missing field would delete every row in the table.
  */
 export function parseWordDeletedPayload(payload: unknown): string[] | null {
+    return parseUuidList(payload, 'wordIds');
+}
+
+/** `{ itemIds: uuid[] }` from curriculum-service, held to the same standard. */
+export function parsePathItemsRetiredPayload(
+    payload: unknown,
+): string[] | null {
+    return parseUuidList(payload, 'itemIds');
+}
+
+function parseUuidList(payload: unknown, key: string): string[] | null {
     if (typeof payload !== 'object' || payload === null) return null;
-    const { wordIds } = payload as { wordIds?: unknown };
-    if (!Array.isArray(wordIds) || wordIds.length === 0) return null;
-    if (!wordIds.every((id) => typeof id === 'string' && isUUID(id))) {
+    const ids = (payload as Record<string, unknown>)[key];
+    if (!Array.isArray(ids) || ids.length === 0) return null;
+    if (!ids.every((id) => typeof id === 'string' && isUUID(id))) {
         return null;
     }
-    return wordIds as string[];
+    return ids as string[];
 }
 
 /**
@@ -79,6 +93,34 @@ export class WordProgressConsumer {
                 await this.wordProgressService.deleteProgressForWords(wordIds);
                 await this.savedWordService.deleteForWords(wordIds);
             },
+        });
+    }
+
+    /**
+     * A Wordsly Path release dropped these items (archived): their review
+     * cards go. Only Path progress is touched (`source = PATH`).
+     */
+    @EventPattern(PATH_ITEMS_RETIRED_TOPIC)
+    async handlePathItemsRetired(
+        @Payload() payload: unknown,
+        @Ctx() context: KafkaContext,
+    ): Promise<void> {
+        const itemIds = parsePathItemsRetiredPayload(payload);
+        if (!itemIds) {
+            this.logger.error(
+                `Ignoring malformed ${PATH_ITEMS_RETIRED_TOPIC} message: ` +
+                    `${context.getMessage()?.value?.toString() ?? ''}`,
+            );
+            await commitCurrentMessage(context);
+            return;
+        }
+
+        await consumeWithRetry({
+            context,
+            logger: this.logger,
+            operation: `delete retired Path progress (${PATH_ITEMS_RETIRED_TOPIC})`,
+            handler: () =>
+                this.wordProgressService.deletePathProgressForItems(itemIds),
         });
     }
 }
