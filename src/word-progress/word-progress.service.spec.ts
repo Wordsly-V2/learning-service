@@ -2,7 +2,7 @@
 jest.mock('uuid', () => ({ v7: () => '00000000-0000-7000-8000-000000000000' }));
 
 import { ConflictException } from '@nestjs/common';
-import { ItemSource } from '@prisma/client';
+import { ItemSource } from '@/word-scope/item-source';
 import { State } from 'ts-fsrs';
 import { AnswerQuality } from './dto/word-progress.dto';
 import { formatClientDate } from '@/daily-habit/daily-habit-date.util';

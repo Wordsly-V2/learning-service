@@ -79,3 +79,7 @@ This replaced a mesh-wide shared secret (`x-service-token`) that satisfied every
 
 - Path alias `@/*` → `src/*`; feature modules; controllers thin, logic in pure `*.logic.ts` files where possible (they're the unit-tested surface); Prisma only via `PrismaService`; DTOs with class-validator; kebab-case folders; 4-space indent, single quotes.
 - Reads that take large `wordIds` arrays are POST endpoints (body, not query) — keep that pattern for new scope-based reads.
+
+## Database rules
+
+- **Never use database enums** (workspace-wide rule, see `../../CLAUDE.md`): no Prisma `enum`, no `CREATE TYPE … AS ENUM`. Use `String` columns; the allowed values live in code as an `as const` list + union type and are validated at the boundary.
