@@ -11,13 +11,26 @@ import { UserScopeGuard } from './user-scope.guard';
  * meaningless; these cases pin that it is refused rather than quietly ignored.
  */
 describe('UserScopeGuard', () => {
-    const guard = new UserScopeGuard();
+    /** `required` is what `@Roles(...)` put on the route, if anything. */
+    const buildGuard = (required?: string[]) =>
+        new UserScopeGuard({ getAllAndOverride: () => required } as never);
+
+    const guard = buildGuard();
 
     const contextFor = (request: Record<string, unknown>) =>
         ({
             getType: () => 'http',
+            getHandler: () => () => undefined,
+            getClass: () => class {},
             switchToHttp: () => ({ getRequest: () => request }),
         }) as never;
+
+    const callerWith = (roles: string[]) => ({
+        sub: 'caller',
+        sid: 's',
+        jti: 'j',
+        roles,
+    });
 
     it('allows an ordinary request that names nobody', () => {
         expect(
@@ -53,6 +66,43 @@ describe('UserScopeGuard', () => {
                 contextFor({ params: {}, query: { userLoginId: 'x' } }),
             ),
         ).toThrow(/userLoginId/);
+    });
+
+    describe('admin routes', () => {
+        const adminRoute = buildGuard(['admin']);
+        const naming = { params: { userId: 'target' }, query: {} };
+
+        it('lets an admin name the user an @Roles("admin") route acts on', () => {
+            expect(
+                adminRoute.canActivate(
+                    contextFor({ ...naming, user: callerWith(['admin']) }),
+                ),
+            ).toBe(true);
+        });
+
+        it('still refuses a non-admin, even if RolesGuard were skipped', () => {
+            expect(() =>
+                adminRoute.canActivate(
+                    contextFor({ ...naming, user: callerWith([]) }),
+                ),
+            ).toThrow(BadRequestException);
+        });
+
+        it('does not exempt an admin on an ordinary route', () => {
+            expect(() =>
+                guard.canActivate(
+                    contextFor({ ...naming, user: callerWith(['admin']) }),
+                ),
+            ).toThrow(BadRequestException);
+        });
+
+        it('does not exempt a route that requires some other role', () => {
+            expect(() =>
+                buildGuard(['editor']).canActivate(
+                    contextFor({ ...naming, user: callerWith(['admin']) }),
+                ),
+            ).toThrow(BadRequestException);
+        });
     });
 
     it('skips non-HTTP transports, which have no caller to distrust', () => {
