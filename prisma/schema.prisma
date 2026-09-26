@@ -10,13 +10,13 @@ datasource db {
 // wordId references a vocabulary-service word or, when source = PATH, a
 // curriculum-service item (no cross-DB FK either way).
 model WordProgress {
-  id          String     @id @db.Uuid
-  wordId      String     @db.Uuid
-  userLoginId String     @db.Uuid
+  id          String @id @db.Uuid
+  wordId      String @db.Uuid
+  userLoginId String @db.Uuid
   // Where the item lives: 'VOCAB' | 'PATH' (ItemSource in
   // src/word-scope/item-source.ts; TEXT, no database enums). Set on create and
   // never changed: an id belongs to exactly one service.
-  source      String     @default("VOCAB")
+  source      String @default("VOCAB")
 
   easeFactor  Float @default(2.5) // FSRS difficulty
   interval    Int   @default(0) // scheduled days until next review
@@ -67,12 +67,12 @@ model WordProgress {
 model DailyHabit {
   userLoginId String @id @map("user_login_id") @db.Uuid
 
-  dailyGoal         Int @default(10) @map("daily_goal")
-  wordsToday        Int @default(0) @map("words_today")
-  streak            Int @default(0)
-  longestStreak     Int @default(0) @map("longest_streak")
-  goalStreak        Int @default(0) @map("goal_streak")
-  longestGoalStreak Int @default(0) @map("longest_goal_streak")
+  dailyGoal         Int       @default(10) @map("daily_goal")
+  wordsToday        Int       @default(0) @map("words_today")
+  streak            Int       @default(0)
+  longestStreak     Int       @default(0) @map("longest_streak")
+  goalStreak        Int       @default(0) @map("goal_streak")
+  longestGoalStreak Int       @default(0) @map("longest_goal_streak")
   practiceDate      DateTime  @map("practice_date") @db.Date
   lastPracticeDate  DateTime? @map("last_practice_date") @db.Date
   lastGoalMetDate   DateTime? @map("last_goal_met_date") @db.Date
@@ -99,14 +99,18 @@ model DailyHabit {
 // chart accuracy/improvement over time without scanning the per-word table.
 // Volume/consistency come from DailyHabitDay; this adds the correctness signal.
 model DailyReviewStat {
-  userLoginId    String   @map("user_login_id") @db.Uuid
-  reviewDate     DateTime @map("review_date") @db.Date
-  reviews        Int      @default(0) // total answers recorded that day
-  correctReviews Int      @default(0) @map("correct_reviews")
-  newWords       Int      @default(0) @map("new_words") // words first seen that day
+  userLoginId        String   @map("user_login_id") @db.Uuid
+  reviewDate         DateTime @map("review_date") @db.Date
+  reviews            Int      @default(0) // total answers recorded that day
+  correctReviews     Int      @default(0) @map("correct_reviews")
+  newWords           Int      @default(0) @map("new_words") // words first seen that day
   // Subset of newWords: Wordsly Path items introduced that day. A lesson paces
   // its own intros, so these do not spend the daily new-word budget.
-  pathNewWords   Int      @default(0) @map("path_new_words")
+  pathNewWords       Int      @default(0) @map("path_new_words")
+  // Subsets of reviews/correctReviews for Wordsly Path items (Path stats in
+  // the learning report). Zero on days before they existed.
+  pathReviews        Int      @default(0) @map("path_reviews")
+  pathCorrectReviews Int      @default(0) @map("path_correct_reviews")
 
   @@id([userLoginId, reviewDate])
   @@index([userLoginId, reviewDate(sort: Desc)])
@@ -126,7 +130,7 @@ model UserLevel {
   // Denormalized cache of levelFromXp(totalXp); recomputed on every write so it
   // can't drift. totalXp stays the source of truth. Persisted so a level-up can
   // be detected by comparing pre/post level within the same transaction.
-  level Int @default(1)
+  level   Int @default(1)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -168,6 +172,21 @@ model UserAchievement {
   @@id([userLoginId, key])
   @@index([userLoginId, unlockedAt(sort: Desc)])
   @@map("user_achievement")
+}
+
+// The newest Wordsly Path totals curriculum-service reported for a user
+// (Kafka `path_progress`). A mirror for the report and Path achievements:
+// curriculum-service owns the progress itself. `reportedAt` is the event's
+// time, so an older message arriving late never overwrites a newer one.
+model PathProgressTotals {
+  userLoginId      String   @id @map("user_login_id") @db.Uuid
+  lessonsCompleted Int      @default(0) @map("lessons_completed")
+  unitsCompleted   Int      @default(0) @map("units_completed")
+  stagesCompleted  Int      @default(0) @map("stages_completed")
+  reportedAt       DateTime @map("reported_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("path_progress_totals")
 }
 
 // Per-user push notification opt-in and reminder preferences (one row per user).

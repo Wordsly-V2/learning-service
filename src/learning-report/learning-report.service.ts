@@ -14,12 +14,14 @@ import {
     buildReportRange,
     buildReviewForecast,
     computeAchievements,
+    computePathAchievements,
     MASTERED_INTERVAL_DAYS,
     ReportPeriod,
     reviewedWordCount,
 } from './learning-report.logic';
 import { addClientDays } from '@/daily-habit/daily-habit.logic';
 import { computeLevelProgress } from '@/user-level/user-level.logic';
+import { ItemSource } from '@/word-scope/item-source';
 import {
     ActivityCalendarResponseDto,
     LearningReportResponseDto,
@@ -29,6 +31,7 @@ import {
 
 /** FSRS State enum value for cards in the Review phase. */
 const FSRS_STATE_REVIEW = 2;
+const PATH = ItemSource.PATH;
 
 @Injectable()
 export class LearningReportService {
@@ -56,6 +59,10 @@ export class LearningReportService {
             habit,
             userLevel,
             unlockedRows,
+            pathCards,
+            pathMastered,
+            pathDue,
+            pathTotals,
         ] = await Promise.all([
             this.prisma.dailyHabitDay.findMany({
                 where: {
@@ -78,6 +85,9 @@ export class LearningReportService {
                     reviews: true,
                     correctReviews: true,
                     newWords: true,
+                    pathReviews: true,
+                    pathCorrectReviews: true,
+                    pathNewWords: true,
                 },
             }),
             this.prisma.wordProgress.groupBy({
@@ -101,6 +111,31 @@ export class LearningReportService {
                 where: { userLoginId },
                 select: { key: true, unlockedAt: true },
             }),
+            this.prisma.wordProgress.aggregate({
+                where: { userLoginId, source: PATH },
+                _count: { _all: true },
+                _sum: { totalReviews: true, correctReviews: true },
+            }),
+            this.prisma.wordProgress.count({
+                where: {
+                    userLoginId,
+                    source: PATH,
+                    state: FSRS_STATE_REVIEW,
+                    interval: { gte: MASTERED_INTERVAL_DAYS },
+                },
+            }),
+            this.prisma.wordProgress.count({
+                where: {
+                    userLoginId,
+                    source: PATH,
+                    suspendedAt: null,
+                    state: { not: 0 },
+                    nextReviewAt: { lte: new Date() },
+                },
+            }),
+            this.prisma.pathProgressTotals.findUnique({
+                where: { userLoginId },
+            }),
         ]);
 
         // Seed every bucket so empty days/months render as zeros (no gaps).
@@ -117,6 +152,10 @@ export class LearningReportService {
                 daysActive: 0,
                 goalMetDays: 0,
                 newWords: 0,
+                pathReviews: 0,
+                pathCorrectReviews: 0,
+                pathAccuracy: null,
+                pathNewWords: 0,
             });
         }
 
@@ -146,6 +185,9 @@ export class LearningReportService {
         let totalReviews = 0;
         let totalCorrect = 0;
         let newWords = 0;
+        let pathReviews = 0;
+        let pathCorrect = 0;
+        let pathNewWords = 0;
         for (const stat of reviewStats) {
             const bucket = buckets.get(
                 bucketKeyForDate(
@@ -157,9 +199,15 @@ export class LearningReportService {
             bucket.reviews += stat.reviews;
             bucket.correctReviews += stat.correctReviews;
             bucket.newWords += stat.newWords;
+            bucket.pathReviews += stat.pathReviews;
+            bucket.pathCorrectReviews += stat.pathCorrectReviews;
+            bucket.pathNewWords += stat.pathNewWords;
             totalReviews += stat.reviews;
             totalCorrect += stat.correctReviews;
             newWords += stat.newWords;
+            pathReviews += stat.pathReviews;
+            pathCorrect += stat.pathCorrectReviews;
+            pathNewWords += stat.pathNewWords;
         }
 
         const bucketList = range.buckets.map((def) => {
@@ -167,6 +215,10 @@ export class LearningReportService {
             bucket.accuracy = accuracyPercent(
                 bucket.correctReviews,
                 bucket.reviews,
+            );
+            bucket.pathAccuracy = accuracyPercent(
+                bucket.pathCorrectReviews,
+                bucket.pathReviews,
             );
             bucket.reviewedWords = reviewedWordCount(
                 bucket.wordsPracticed,
@@ -206,11 +258,19 @@ export class LearningReportService {
         const unlockedAtByKey = new Map(
             unlockedRows.map((row) => [row.key, row.unlockedAt]),
         );
-        const achievements = computeAchievements({
-            longestStreak: habit?.longestStreak ?? 0,
-            totalWordsPracticed: habit?.totalWordsPracticed ?? 0,
-            totalPracticeDays: habit?.totalPracticeDays ?? 0,
-        }).map((a) => ({
+        const pathProgress = {
+            lessonsCompleted: pathTotals?.lessonsCompleted ?? 0,
+            unitsCompleted: pathTotals?.unitsCompleted ?? 0,
+            stagesCompleted: pathTotals?.stagesCompleted ?? 0,
+        };
+        const achievements = [
+            ...computeAchievements({
+                longestStreak: habit?.longestStreak ?? 0,
+                totalWordsPracticed: habit?.totalWordsPracticed ?? 0,
+                totalPracticeDays: habit?.totalPracticeDays ?? 0,
+            }),
+            ...computePathAchievements(pathProgress),
+        ].map((a) => ({
             ...a,
             unlockedAt: unlockedAtByKey.get(a.key) ?? null,
         }));
@@ -240,6 +300,20 @@ export class LearningReportService {
                 masteredWords,
                 totalStarted,
                 leeches: leechCount,
+            },
+            path: {
+                itemsStarted: pathCards._count._all,
+                dueNow: pathDue,
+                masteredItems: pathMastered,
+                lifetimeReviews: pathCards._sum.totalReviews ?? 0,
+                lifetimeAccuracy: accuracyPercent(
+                    pathCards._sum.correctReviews ?? 0,
+                    pathCards._sum.totalReviews ?? 0,
+                ),
+                periodReviews: pathReviews,
+                periodAccuracy: accuracyPercent(pathCorrect, pathReviews),
+                periodNewItems: pathNewWords,
+                ...pathProgress,
             },
             streaks,
             level: computeLevelProgress(userLevel?.totalXp ?? 0),

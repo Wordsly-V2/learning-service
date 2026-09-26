@@ -1,15 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-    IsIn,
-    IsInt,
-    IsOptional,
-    IsString,
-    Max,
-    Min,
-} from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsClientDate } from '@/daily-habit/daily-habit-date.util';
-import type { ReportGranularity, ReportPeriod } from '../learning-report.logic';
+import {
+    ACHIEVEMENT_CATEGORIES,
+    type AchievementCategory,
+    type ReportGranularity,
+    type ReportPeriod,
+} from '../learning-report.logic';
 
 export const REPORT_PERIODS: ReportPeriod[] = ['week', 'month', 'year'];
 
@@ -144,6 +142,29 @@ export class ReportBucketDto {
 
     @ApiProperty({ description: 'Words first seen in this bucket', example: 5 })
     newWords: number;
+
+    @ApiProperty({
+        description: 'Answers on Wordsly Path items (subset of reviews)',
+        example: 6,
+    })
+    pathReviews: number;
+
+    @ApiProperty({ example: 5 })
+    pathCorrectReviews: number;
+
+    @ApiProperty({
+        description: 'Path accuracy, or null without Path answers that bucket',
+        example: 83.3,
+        nullable: true,
+    })
+    pathAccuracy: number | null;
+
+    @ApiProperty({
+        description:
+            'Path items first seen in this bucket (subset of newWords)',
+        example: 2,
+    })
+    pathNewWords: number;
 }
 
 export class ReportSummaryDto {
@@ -207,6 +228,63 @@ export class ReportMasteryDto {
     leeches: number;
 }
 
+export class ReportPathDto {
+    @ApiProperty({
+        description: 'Path items with a review card',
+        example: 120,
+    })
+    itemsStarted: number;
+
+    @ApiProperty({
+        description: 'Path cards due now (suspended excluded)',
+        example: 14,
+    })
+    dueNow: number;
+
+    @ApiProperty({
+        description: 'Path cards in review with a long interval',
+        example: 30,
+    })
+    masteredItems: number;
+
+    @ApiProperty({
+        description: 'Answers on the Path cards the learner has now',
+        example: 640,
+    })
+    lifetimeReviews: number;
+
+    @ApiProperty({ example: 86.4, nullable: true })
+    lifetimeAccuracy: number | null;
+
+    @ApiProperty({
+        description: 'Path answers in the window (counted since P4-2)',
+        example: 90,
+    })
+    periodReviews: number;
+
+    @ApiProperty({ example: 88.9, nullable: true })
+    periodAccuracy: number | null;
+
+    @ApiProperty({
+        description: 'Path items first seen in the window',
+        example: 25,
+    })
+    periodNewItems: number;
+
+    @ApiProperty({
+        description:
+            'From curriculum-service (Kafka path_progress); 0 until it reports',
+        example: 9,
+    })
+    lessonsCompleted: number;
+
+    @ApiProperty({ example: 3 })
+    unitsCompleted: number;
+
+    @ApiProperty({ example: 0 })
+    stagesCompleted: number;
+}
+
 export class ReportStreaksDto {
     @ApiProperty({ example: 6 })
     current: number;
@@ -266,8 +344,8 @@ export class ReportAchievementDto {
     @ApiProperty({ example: '7-day streak' })
     label: string;
 
-    @ApiProperty({ enum: ['streak', 'words', 'days'], example: 'streak' })
-    category: 'streak' | 'words' | 'days';
+    @ApiProperty({ enum: ACHIEVEMENT_CATEGORIES, example: 'streak' })
+    category: AchievementCategory;
 
     @ApiProperty({ example: true })
     achieved: boolean;
@@ -363,6 +441,9 @@ export class LearningReportResponseDto {
 
     @ApiProperty({ type: ReportMasteryDto })
     mastery: ReportMasteryDto;
+
+    @ApiProperty({ type: ReportPathDto })
+    path: ReportPathDto;
 
     @ApiProperty({ type: ReportStreaksDto })
     streaks: ReportStreaksDto;

@@ -201,10 +201,20 @@ export interface AchievementInput {
     totalPracticeDays: number;
 }
 
+export const ACHIEVEMENT_CATEGORIES = [
+    'streak',
+    'words',
+    'days',
+    'lessons',
+    'units',
+    'stages',
+] as const;
+export type AchievementCategory = (typeof ACHIEVEMENT_CATEGORIES)[number];
+
 export interface Achievement {
     key: string;
     label: string;
-    category: 'streak' | 'words' | 'days';
+    category: AchievementCategory;
     achieved: boolean;
     value: number;
     target: number;
@@ -252,4 +262,62 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
         });
     }
     return badges;
+}
+
+/** Wordsly Path totals, as curriculum-service last reported them. */
+export interface PathAchievementInput {
+    lessonsCompleted: number;
+    unitsCompleted: number;
+    stagesCompleted: number;
+}
+
+/** Path lessons completed (about 3 per unit). */
+export const PATH_LESSON_MILESTONES = [1, 10, 25, 50, 100, 200] as const;
+/** Path units completed (6 to 12 per stage). */
+export const PATH_UNIT_MILESTONES = [1, 5, 10, 25, 50] as const;
+/** Path stages completed (Pre-A1 to C1). */
+export const PATH_STAGE_MILESTONES = [1, 2, 3, 4, 5, 6] as const;
+
+/** Path badges, every milestone achieved or locked, like computeAchievements. */
+export function computePathAchievements(
+    input: PathAchievementInput,
+): Achievement[] {
+    const series: {
+        category: AchievementCategory;
+        value: number;
+        targets: readonly number[];
+        noun: string;
+    }[] = [
+        {
+            category: 'lessons',
+            value: input.lessonsCompleted,
+            targets: PATH_LESSON_MILESTONES,
+            noun: 'Path lesson',
+        },
+        {
+            category: 'units',
+            value: input.unitsCompleted,
+            targets: PATH_UNIT_MILESTONES,
+            noun: 'Path unit',
+        },
+        {
+            category: 'stages',
+            value: input.stagesCompleted,
+            targets: PATH_STAGE_MILESTONES,
+            noun: 'Path stage',
+        },
+    ];
+    return series.flatMap(({ category, value, targets, noun }) =>
+        targets.map((target) => ({
+            key: `${category}-${target}`,
+            label:
+                target === 1
+                    ? `First ${noun} completed`
+                    : `${target} ${noun}s completed`,
+            category,
+            achieved: value >= target,
+            value,
+            target,
+        })),
+    );
 }

@@ -65,6 +65,9 @@ interface ReviewStatDelta {
     newWords: number;
     /** Subset of newWords that are Wordsly Path items (see pacing logic). */
     pathNewWords: number;
+    /** Subsets of reviews/correctReviews for Path items (report stats). */
+    pathReviews: number;
+    pathCorrectReviews: number;
 }
 
 function getOrInitDelta(
@@ -80,6 +83,8 @@ function getOrInitDelta(
         correctReviews: 0,
         newWords: 0,
         pathNewWords: 0,
+        pathReviews: 0,
+        pathCorrectReviews: 0,
     };
     byDate.set(date, created);
     return created;
@@ -325,12 +330,16 @@ export class WordProgressService {
                 correctReviews: delta.correctReviews,
                 newWords: delta.newWords,
                 pathNewWords: delta.pathNewWords,
+                pathReviews: delta.pathReviews,
+                pathCorrectReviews: delta.pathCorrectReviews,
             },
             update: {
                 reviews: { increment: delta.reviews },
                 correctReviews: { increment: delta.correctReviews },
                 newWords: { increment: delta.newWords },
                 pathNewWords: { increment: delta.pathNewWords },
+                pathReviews: { increment: delta.pathReviews },
+                pathCorrectReviews: { increment: delta.pathCorrectReviews },
             },
         });
     }
@@ -435,12 +444,16 @@ export class WordProgressService {
                 },
                 toItemSource(source),
             );
+            const correct =
+                quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0;
+            const isPath = source === 'path' ? 1 : 0;
             const delta: ReviewStatDelta = {
                 reviews: 1,
-                correctReviews:
-                    quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY ? 1 : 0,
+                correctReviews: correct,
                 newWords: existing === null ? 1 : 0,
-                pathNewWords: existing === null && source === 'path' ? 1 : 0,
+                pathNewWords: existing === null ? isPath : 0,
+                pathReviews: isPath,
+                pathCorrectReviews: correct * isPath,
             };
             await this.recordReviewStat(tx, userLoginId, reviewDate, delta);
             // A word pays out at most once a day, however many times it is
@@ -626,22 +639,21 @@ export class WordProgressService {
                         deltaByDate,
                         answer.reviewDate,
                     );
+                    const isPath =
+                        sourceByWordId.get(answer.wordId) === ItemSource.PATH;
                     delta.reviews++;
+                    if (isPath) delta.pathReviews++;
                     if (
                         answer.quality >= AnswerQuality.CORRECT_WITH_DIFFICULTY
                     ) {
                         delta.correctReviews++;
+                        if (isPath) delta.pathCorrectReviews++;
                     }
                     // First-ever answer only, so a word first seen on day 1 of a
                     // multi-day batch counts as new on day 1 and nowhere else.
                     if (prior === null) {
                         delta.newWords++;
-                        if (
-                            sourceByWordId.get(answer.wordId) ===
-                            ItemSource.PATH
-                        ) {
-                            delta.pathNewWords++;
-                        }
+                        if (isPath) delta.pathNewWords++;
                     }
 
                     const payKey = `${answer.reviewDate}|${answer.wordId}`;
