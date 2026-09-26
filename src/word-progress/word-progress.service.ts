@@ -1081,6 +1081,21 @@ export class WordProgressService {
         });
     }
 
+    /**
+     * Drops every learner's progress for retired Wordsly Path items. Only Path
+     * cards: an id is never both, but the source filter keeps a bad message
+     * from touching vocabulary progress at all.
+     */
+    async deletePathProgressForItems(itemIds: string[]): Promise<void> {
+        // Same guard as deleteProgressForWords: `{ in: undefined }` is no filter.
+        if (!Array.isArray(itemIds) || itemIds.length === 0) {
+            return;
+        }
+        await this.prisma.wordProgress.deleteMany({
+            where: { wordId: { in: itemIds }, source: ItemSource.PATH },
+        });
+    }
+
     async resetProgressBulk(
         userLoginId: string,
         wordIds: string[],
