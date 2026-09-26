@@ -7,5 +7,7 @@ import { LearningReportService } from './learning-report.service';
     imports: [PrismaModule],
     controllers: [LearningReportController],
     providers: [LearningReportService],
+    // The admin area shows a learner's report exactly as they see it.
+    exports: [LearningReportService],
 })
 export class LearningReportModule {}
