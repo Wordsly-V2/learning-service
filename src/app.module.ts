@@ -20,6 +20,7 @@ import { UserLevelModule } from './user-level/user-level.module';
 import { LearningSettingsModule } from './learning-settings/learning-settings.module';
 import { UserPreferencesModule } from './user-preferences/user-preferences.module';
 import { AchievementModule } from './achievement/achievement.module';
+import { PathProgressModule } from './path-progress/path-progress.module';
 import { NotificationModule } from './notification/notification.module';
 import { SyncModule } from './sync/sync.module';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -48,6 +49,7 @@ import { RequestContextLogger } from './common/request-context-logger';
         LearningSettingsModule,
         UserPreferencesModule,
         AchievementModule,
+        PathProgressModule,
         NotificationModule,
         SyncModule,
     ],

@@ -39,6 +39,7 @@ import {
     XP_FIRST_PRACTICE_OF_DAY,
 } from '@/user-level/user-level.logic';
 import { AchievementService } from '@/achievement/achievement.service';
+import { computeAchievements } from '@/learning-report/learning-report.logic';
 import { UnlockedAchievementDto } from '@/achievement/dto/achievement.dto';
 import {
     SYNC_ENDPOINT_HABIT_BATCH,
@@ -342,11 +343,11 @@ export class DailyHabitService {
                 const unlocked = await this.achievementService.detectAndUnlock(
                     tx,
                     userLoginId,
-                    {
+                    computeAchievements({
                         longestStreak: row.longestStreak,
                         totalWordsPracticed: row.totalWordsPracticed,
                         totalPracticeDays: row.totalPracticeDays,
-                    },
+                    }),
                 );
                 return {
                     row,

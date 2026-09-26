@@ -4,11 +4,7 @@
  * each unlock grants. No I/O.
  */
 
-import {
-    Achievement,
-    AchievementInput,
-    computeAchievements,
-} from '@/learning-report/learning-report.logic';
+import { Achievement } from '@/learning-report/learning-report.logic';
 
 export interface AchievementReward {
     xp: number;
@@ -33,22 +29,26 @@ export function achievementReward(key: string): AchievementReward {
             return { xp: Math.min(300, 25 + Math.round(target / 10)) };
         case 'days':
             return { xp: Math.min(300, 50 + target) };
+        case 'lessons':
+            return { xp: Math.min(300, 25 + target) };
+        case 'units':
+            return { xp: Math.min(300, 50 + 2 * target) };
+        case 'stages':
+            return { xp: Math.min(300, 50 + 50 * target) };
         default:
             return { xp: 25 };
     }
 }
 
-/** Keys of achievements currently satisfied by the given lifetime totals. */
-export function achievedKeys(input: AchievementInput): string[] {
-    return computeAchievements(input)
-        .filter((a: Achievement) => a.achieved)
-        .map((a) => a.key);
+/** Keys of the badges currently achieved. */
+export function achievedKeys(badges: Achievement[]): string[] {
+    return badges.filter((a) => a.achieved).map((a) => a.key);
 }
 
-/** Keys satisfied now that were not already recorded as unlocked. */
+/** Keys achieved now that were not already recorded as unlocked. */
 export function diffNewlyUnlocked(
-    input: AchievementInput,
+    badges: Achievement[],
     existingKeys: Set<string>,
 ): string[] {
-    return achievedKeys(input).filter((key) => !existingKeys.has(key));
+    return achievedKeys(badges).filter((key) => !existingKeys.has(key));
 }

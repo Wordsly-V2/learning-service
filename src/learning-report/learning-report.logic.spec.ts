@@ -3,6 +3,7 @@ import {
     bucketKeyForDate,
     buildReportRange,
     computeAchievements,
+    computePathAchievements,
     reviewedWordCount,
 } from './learning-report.logic';
 
@@ -120,5 +121,33 @@ describe('computeAchievements', () => {
         expect(streak14?.achieved).toBe(false);
         expect(words100?.achieved).toBe(true);
         expect(words100?.value).toBe(120);
+    });
+});
+
+describe('computePathAchievements', () => {
+    it('lists every Path milestone with progress toward it', () => {
+        const badges = computePathAchievements({
+            lessonsCompleted: 12,
+            unitsCompleted: 4,
+            stagesCompleted: 1,
+        });
+        expect(badges.filter((b) => b.achieved).map((b) => b.key)).toEqual([
+            'lessons-1',
+            'lessons-10',
+            'units-1',
+            'stages-1',
+        ]);
+        expect(badges.find((b) => b.key === 'units-5')).toMatchObject({
+            category: 'units',
+            achieved: false,
+            value: 4,
+            target: 5,
+        });
+        expect(badges.find((b) => b.key === 'lessons-1')?.label).toBe(
+            'First Path lesson completed',
+        );
+        expect(badges.find((b) => b.key === 'stages-2')?.label).toBe(
+            '2 Path stages completed',
+        );
     });
 });

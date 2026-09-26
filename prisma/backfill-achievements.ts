@@ -15,6 +15,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { achievedKeys } from '../src/achievement/achievement.logic';
+import { computeAchievements } from '../src/learning-report/learning-report.logic';
 
 async function main() {
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -33,11 +34,13 @@ async function main() {
 
         let inserted = 0;
         for (const habit of habits) {
-            const keys = achievedKeys({
-                longestStreak: habit.longestStreak,
-                totalWordsPracticed: habit.totalWordsPracticed,
-                totalPracticeDays: habit.totalPracticeDays,
-            });
+            const keys = achievedKeys(
+                computeAchievements({
+                    longestStreak: habit.longestStreak,
+                    totalWordsPracticed: habit.totalWordsPracticed,
+                    totalPracticeDays: habit.totalPracticeDays,
+                }),
+            );
             if (keys.length === 0) continue;
             const result = await prisma.userAchievement.createMany({
                 data: keys.map((key) => ({

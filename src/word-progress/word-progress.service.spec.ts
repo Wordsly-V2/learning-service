@@ -192,6 +192,10 @@ describe('WordProgressService.recordAnswersBulk', () => {
                 create: expect.objectContaining({
                     newWords: 2,
                     pathNewWords: 1,
+                    reviews: 2,
+                    pathReviews: 1,
+                    correctReviews: 2,
+                    pathCorrectReviews: 1,
                 }),
             }),
         );
@@ -542,6 +546,35 @@ describe('WordProgressService.recordAnswer', () => {
             userLoginId: USER,
             clientDate,
         });
+
+    it('counts a Path answer in the Path subsets of the day', async () => {
+        await service.recordAnswer({
+            wordId: WORD_A,
+            quality: AnswerQuality.INCORRECT,
+            userLoginId: USER,
+            source: 'path',
+        });
+        await answer();
+
+        const creates = (
+            prisma.dailyReviewStat.upsert.mock.calls as [
+                { create: Record<string, number> },
+            ][]
+        ).map(([args]) => args.create);
+        expect(creates[0]).toMatchObject({
+            reviews: 1,
+            correctReviews: 0,
+            pathReviews: 1,
+            pathCorrectReviews: 0,
+            pathNewWords: 0,
+        });
+        expect(creates[1]).toMatchObject({
+            reviews: 1,
+            correctReviews: 1,
+            pathReviews: 0,
+            pathCorrectReviews: 0,
+        });
+    });
 
     it('files a backdated clientDate under the server date, like the bulk path', async () => {
         await answer(daysFromToday(-10));

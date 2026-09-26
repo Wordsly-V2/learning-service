@@ -1,11 +1,7 @@
 import { PrismaService } from '@/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import {
-    Achievement,
-    AchievementInput,
-    computeAchievements,
-} from '@/learning-report/learning-report.logic';
+import { Achievement } from '@/learning-report/learning-report.logic';
 import { UserLevelService } from '@/user-level/user-level.service';
 import { achievementReward, diffNewlyUnlocked } from './achievement.logic';
 import { UnlockedAchievementDto } from './dto/achievement.dto';
@@ -25,28 +21,30 @@ export class AchievementService {
     ) {}
 
     /**
-     * Detect achievements newly satisfied by the user's totals and persist them,
-     * awarding XP and (for streak achievements) a capped streak freeze. Runs
-     * inside the caller's transaction so unlocks are atomic with the write that
-     * triggered them. Achievement XP is flat (no streak multiplier).
+     * Persist the achieved badges not yet recorded, awarding their XP. Callers
+     * pass the badges of their own domain (`computeAchievements` for habits,
+     * `computePathAchievements` for Wordsly Path); badges are never revoked,
+     * so a lower total later changes nothing. Runs inside the caller's
+     * transaction so unlocks are atomic with the write that triggered them.
+     * Achievement XP is flat (no streak multiplier).
      */
     async detectAndUnlock(
         tx: Prisma.TransactionClient,
         userLoginId: string,
-        input: AchievementInput,
+        badges: Achievement[],
     ): Promise<UnlockedAchievementDto[]> {
         const existing = await tx.userAchievement.findMany({
             where: { userLoginId },
             select: { key: true },
         });
         const existingKeys = new Set(existing.map((row) => row.key));
-        const newKeys = diffNewlyUnlocked(input, existingKeys);
+        const newKeys = diffNewlyUnlocked(badges, existingKeys);
         if (newKeys.length === 0) {
             return [];
         }
 
         const byKey = new Map<string, Achievement>(
-            computeAchievements(input).map((a) => [a.key, a]),
+            badges.map((a) => [a.key, a]),
         );
 
         const unlocked: UnlockedAchievementDto[] = [];

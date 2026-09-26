@@ -1,4 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import {
+    ACHIEVEMENT_CATEGORIES,
+    type AchievementCategory,
+} from '@/learning-report/learning-report.logic';
 
 /** An achievement unlocked during a write, so the client can celebrate it. */
 export class UnlockedAchievementDto {
@@ -11,9 +15,9 @@ export class UnlockedAchievementDto {
     @ApiProperty({
         description: 'Category',
         example: 'streak',
-        enum: ['streak', 'words', 'days'],
+        enum: ACHIEVEMENT_CATEGORIES,
     })
-    category: 'streak' | 'words' | 'days';
+    category: AchievementCategory;
 
     @ApiProperty({ description: 'XP awarded for the unlock', example: 57 })
     xpAwarded: number;
