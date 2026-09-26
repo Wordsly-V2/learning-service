@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { AdminLearningModule } from './admin-learning/admin-learning.module';
 import { AuthModule } from './auth/jwt/auth.module';
 import { AccessGuard } from './auth/jwt/access.guard';
 import { UserScopeGuard } from './auth/jwt/user-scope.guard';
@@ -42,6 +43,7 @@ import { RequestContextLogger } from './common/request-context-logger';
         SavedWordModule,
         DailyHabitModule,
         LearningReportModule,
+        AdminLearningModule,
         UserLevelModule,
         LearningSettingsModule,
         UserPreferencesModule,

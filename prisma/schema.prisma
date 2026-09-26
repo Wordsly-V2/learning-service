@@ -110,6 +110,8 @@ model DailyReviewStat {
 
   @@id([userLoginId, reviewDate])
   @@index([userLoginId, reviewDate(sort: Desc)])
+  // Admin stats read one day range across every learner.
+  @@index([reviewDate])
   @@map("daily_review_stat")
 }
 
@@ -149,6 +151,8 @@ model DailyHabitDay {
 
   @@id([userLoginId, practiceDate])
   @@index([userLoginId, practiceDate(sort: Desc)])
+  // Admin stats read one day range across every learner.
+  @@index([practiceDate])
   @@map("daily_habit_day")
 }
 

@@ -4,7 +4,9 @@ import {
     ExecutionContext,
     Injectable,
 } from '@nestjs/common';
-import type { Request } from 'express';
+import { Reflector } from '@nestjs/core';
+import { AuthenticatedRequest } from './authenticated-request';
+import { ADMIN_ROLE, ROLES_KEY } from './roles.decorator';
 
 /**
  * Anything that looks like a caller-supplied user id. Deliberately loose: it is
@@ -26,17 +28,28 @@ const USER_ID_LIKE = /user.*id/i;
  * parameter `:userId` was simply never checked. Rejecting the whole shape,
  * rather than reconciling one blessed spelling of it, removes that gap.
  *
+ * The one exception is an admin route (`@Roles('admin')`) called by an admin:
+ * acting on another user's account is what those routes are for, so they take
+ * the target id from the URL. Both halves are checked here, the route's
+ * requirement and the caller's role, so the exemption does not rely on
+ * RolesGuard having run first.
+ *
  * Body fields are not checked here — guards run before validation, and the
  * global `ValidationPipe({ whitelist: true })` already strips any property no
  * DTO declares.
  */
 @Injectable()
 export class UserScopeGuard implements CanActivate {
+    constructor(private readonly reflector: Reflector) {}
+
     canActivate(context: ExecutionContext): boolean {
         // Kafka handlers have no params, no query and no caller to distrust.
         if (context.getType() !== 'http') return true;
 
-        const request = context.switchToHttp().getRequest<Request>();
+        const request = context
+            .switchToHttp()
+            .getRequest<AuthenticatedRequest>();
+        if (this.isAdminCallingAdminRoute(context, request)) return true;
 
         const offender =
             findUserIdLike(request.params) ?? findUserIdLike(request.query);
@@ -49,6 +62,20 @@ export class UserScopeGuard implements CanActivate {
         }
 
         return true;
+    }
+
+    private isAdminCallingAdminRoute(
+        context: ExecutionContext,
+        request: AuthenticatedRequest,
+    ): boolean {
+        const required = this.reflector.getAllAndOverride<string[] | undefined>(
+            ROLES_KEY,
+            [context.getHandler(), context.getClass()],
+        );
+        return (
+            (required?.includes(ADMIN_ROLE) ?? false) &&
+            (request.user?.roles?.includes(ADMIN_ROLE) ?? false)
+        );
     }
 }
 
