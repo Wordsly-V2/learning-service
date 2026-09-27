@@ -23,7 +23,7 @@ import {
 } from '@/word-scope/item-source';
 
 /** Shared `source` field: which service the id belongs to. */
-function ItemSourceField(description: string): PropertyDecorator {
+export function ItemSourceField(description: string): PropertyDecorator {
     return (target, key) => {
         ApiPropertyOptional({
             description,

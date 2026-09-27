@@ -41,7 +41,12 @@ export class SavedWordController {
         @CurrentUser() userLoginId: string,
         @Body() body: SaveWordDto,
     ): Promise<{ success: boolean }> {
-        await this.savedWordService.save(userLoginId, body.wordId, body.note);
+        await this.savedWordService.save(
+            userLoginId,
+            body.wordId,
+            body.note,
+            body.source,
+        );
         return { success: true };
     }
 
@@ -89,6 +94,6 @@ export class SavedWordController {
                 body.lessonId,
             );
         }
-        return this.savedWordService.list(userLoginId, wordIds);
+        return this.savedWordService.list(userLoginId, wordIds, body.source);
     }
 }
