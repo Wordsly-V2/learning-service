@@ -2,12 +2,20 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
     ArrayMaxSize,
     IsArray,
+    IsIn,
     IsOptional,
     IsString,
     IsUUID,
     MaxLength,
 } from 'class-validator';
-import { MAX_ID_LIST } from '@/word-progress/dto/word-progress.dto';
+import {
+    ItemSourceField,
+    MAX_ID_LIST,
+} from '@/word-progress/dto/word-progress.dto';
+import {
+    ITEM_SOURCE_PARAMS,
+    type ItemSourceParam,
+} from '@/word-scope/item-source';
 
 /** Long enough for a reminder to yourself, short enough not to be a document. */
 export const MAX_SAVED_WORD_NOTE = 500;
@@ -29,6 +37,11 @@ export class SaveWordDto {
     @IsString()
     @MaxLength(MAX_SAVED_WORD_NOTE)
     note?: string;
+
+    @ItemSourceField(
+        "Where the item lives: 'vocab' (the default) or 'path' (a Wordsly Path item). Only used when the flag is created; an id belongs to one service.",
+    )
+    source?: ItemSourceParam;
 }
 
 /**
@@ -57,6 +70,15 @@ export class ListSavedWordsDto {
     @IsOptional()
     @IsUUID()
     lessonId?: string;
+
+    @ApiPropertyOptional({
+        description:
+            "Only flags from this source; omit for both. A course or lesson scope only ever matches 'vocab' flags.",
+        enum: ITEM_SOURCE_PARAMS,
+    })
+    @IsOptional()
+    @IsIn(ITEM_SOURCE_PARAMS)
+    source?: ItemSourceParam;
 }
 
 export class SavedWordItemDto {
@@ -65,6 +87,13 @@ export class SavedWordItemDto {
         example: '01936b3e-7c8f-7890-abcd-ef1234567890',
     })
     wordId: string;
+
+    @ApiProperty({
+        description:
+            "Where the item lives: 'vocab' (vocabulary-service) or 'path' (curriculum-service).",
+        enum: ITEM_SOURCE_PARAMS,
+    })
+    source: ItemSourceParam;
 
     @ApiPropertyOptional({ description: 'The learner’s note, if any' })
     note?: string;

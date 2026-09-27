@@ -18,3 +18,8 @@ export type ItemSourceParam = (typeof ITEM_SOURCE_PARAMS)[number];
 export function toItemSource(param: ItemSourceParam | undefined): ItemSource {
     return param === 'path' ? ItemSource.PATH : ItemSource.VOCAB;
 }
+
+/** The API spelling of a stored source (the inverse of `toItemSource`). */
+export function toItemSourceParam(source: string): ItemSourceParam {
+    return source === ItemSource.PATH ? 'path' : 'vocab';
+}

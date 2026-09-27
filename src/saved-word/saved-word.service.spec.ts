@@ -17,9 +17,10 @@ const buildService = () => {
     return { prisma, service: new SavedWordService(prisma as never) };
 };
 
-const savedRow = (wordId: string, note?: string) => ({
+const savedRow = (wordId: string, note?: string, source = 'VOCAB') => ({
     userLoginId: USER,
     wordId,
+    source,
     note: note ?? null,
     createdAt: new Date('2026-09-17T09:00:00.000Z'),
 });
@@ -38,7 +39,20 @@ describe('SavedWordService', () => {
                     userLoginId: USER,
                     wordId: WORD_A,
                     note: 'mixed up with "affect"',
+                    source: 'VOCAB',
                 },
+            }),
+        );
+    });
+
+    it('stores a Path flag with its source, and never rewrites it', async () => {
+        const { prisma, service } = buildService();
+        await service.save(USER, WORD_A, undefined, 'path');
+
+        expect(prisma.savedWord.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+                create: expect.objectContaining({ source: 'PATH' }) as unknown,
+                update: { note: undefined },
             }),
         );
     });
@@ -54,6 +68,7 @@ describe('SavedWordService', () => {
         expect(savedWords).toEqual([
             expect.objectContaining({
                 wordId: WORD_A,
+                source: 'vocab',
                 note: 'tricky',
                 nextReviewAt: null,
                 totalReviews: 0,
@@ -73,6 +88,7 @@ describe('SavedWordService', () => {
         prisma.wordProgress.findMany.mockResolvedValue([
             {
                 wordId: WORD_A,
+                source: 'VOCAB',
                 nextReviewAt: new Date('2026-09-27T00:00:00.000Z'),
                 totalReviews: 8,
                 correctReviews: 5,
@@ -103,6 +119,7 @@ describe('SavedWordService', () => {
         prisma.wordProgress.findMany.mockResolvedValue([
             {
                 wordId: WORD_A,
+                source: 'VOCAB',
                 nextReviewAt: new Date(),
                 totalReviews: 4,
                 correctReviews: 2,
@@ -114,6 +131,73 @@ describe('SavedWordService', () => {
 
         const { savedWords } = await service.list(USER);
         expect(savedWords[0].isSettled).toBe(false);
+    });
+
+    it('reads a Path flag with Path progress and filters by source', async () => {
+        const { prisma, service } = buildService();
+        prisma.savedWord.findMany.mockResolvedValue([
+            savedRow(WORD_A, undefined, 'PATH'),
+        ]);
+        prisma.wordProgress.findMany.mockResolvedValue([
+            {
+                wordId: WORD_A,
+                source: 'PATH',
+                nextReviewAt: new Date(),
+                totalReviews: 4,
+                correctReviews: 1,
+                isLeech: false,
+                state: FSRS_STATE_REVIEW,
+                correctStreak: 0,
+            },
+        ]);
+
+        const { savedWords } = await service.list(USER, undefined, 'path');
+
+        expect(prisma.savedWord.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: { userLoginId: USER, source: 'PATH' },
+            }),
+        );
+        expect(savedWords[0]).toEqual(
+            expect.objectContaining({
+                source: 'path',
+                totalReviews: 4,
+                successRate: 25,
+            }),
+        );
+    });
+
+    it('ignores progress of the other source', async () => {
+        const { prisma, service } = buildService();
+        prisma.savedWord.findMany.mockResolvedValue([savedRow(WORD_A)]);
+        prisma.wordProgress.findMany.mockResolvedValue([
+            {
+                wordId: WORD_A,
+                source: 'PATH',
+                nextReviewAt: new Date(),
+                totalReviews: 4,
+                correctReviews: 4,
+                isLeech: false,
+                state: FSRS_STATE_REVIEW,
+                correctStreak: 4,
+            },
+        ]);
+
+        const { savedWords } = await service.list(USER);
+        expect(savedWords[0].totalReviews).toBe(0);
+    });
+
+    it('deletes only flags of the matching source', async () => {
+        const { prisma, service } = buildService();
+        await service.deleteForWords([WORD_A]);
+        await service.deleteForPathItems([WORD_B]);
+
+        expect(prisma.savedWord.deleteMany).toHaveBeenNthCalledWith(1, {
+            where: { wordId: { in: [WORD_A] }, source: 'VOCAB' },
+        });
+        expect(prisma.savedWord.deleteMany).toHaveBeenNthCalledWith(2, {
+            where: { wordId: { in: [WORD_B] }, source: 'PATH' },
+        });
     });
 
     it('short-circuits an empty scope without querying', async () => {

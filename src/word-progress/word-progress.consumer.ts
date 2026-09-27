@@ -98,7 +98,7 @@ export class WordProgressConsumer {
 
     /**
      * A Wordsly Path release dropped these items (archived): their review
-     * cards go. Only Path progress is touched (`source = PATH`).
+     * cards and hard-word flags go. Only Path rows are touched (`source = PATH`).
      */
     @EventPattern(PATH_ITEMS_RETIRED_TOPIC)
     async handlePathItemsRetired(
@@ -119,8 +119,12 @@ export class WordProgressConsumer {
             context,
             logger: this.logger,
             operation: `delete retired Path progress (${PATH_ITEMS_RETIRED_TOPIC})`,
-            handler: () =>
-                this.wordProgressService.deletePathProgressForItems(itemIds),
+            handler: async () => {
+                await this.wordProgressService.deletePathProgressForItems(
+                    itemIds,
+                );
+                await this.savedWordService.deleteForPathItems(itemIds);
+            },
         });
     }
 }

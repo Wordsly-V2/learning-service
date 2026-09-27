@@ -280,6 +280,9 @@ model SyncRequest {
 model SavedWord {
   userLoginId String   @map("user_login_id") @db.Uuid
   wordId      String   @map("word_id") @db.Uuid
+  // Where the item lives: 'VOCAB' | 'PATH' (ItemSource, TEXT, no database
+  // enums), as on WordProgress. Set on create and never changed.
+  source      String   @default("VOCAB")
   /// Optional note on why it is hard — the learner's own words.
   note        String?
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
