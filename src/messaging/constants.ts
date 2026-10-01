@@ -16,9 +16,17 @@ export const PATH_ITEMS_RETIRED_TOPIC = 'path_items_retired';
  */
 export const PATH_PROGRESS_TOPIC = 'path_progress';
 
+/**
+ * Published by auth-service (through its outbox) after an admin deletes an
+ * account: `{ userLoginId, deletedAt }`, keyed by user. Consumed to delete
+ * every row this service holds for that user.
+ */
+export const USER_DELETED_TOPIC = 'user_deleted';
+
 /** Every topic this service consumes; created at boot if missing (main.ts). */
 export const CONSUMED_TOPICS = [
     WORDS_DELETED_TOPIC,
     PATH_ITEMS_RETIRED_TOPIC,
     PATH_PROGRESS_TOPIC,
+    USER_DELETED_TOPIC,
 ];
