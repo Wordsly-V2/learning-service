@@ -25,6 +25,7 @@ import { NotificationModule } from './notification/notification.module';
 import { SyncModule } from './sync/sync.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { HealthModule } from './health/health.module';
+import { UserDataModule } from './user-data/user-data.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { RequestContextLogger } from './common/request-context-logger';
 
@@ -41,6 +42,7 @@ import { RequestContextLogger } from './common/request-context-logger';
         ScheduleModule.forRoot(),
         PrismaModule,
         WordProgressModule,
+        UserDataModule,
         SavedWordModule,
         DailyHabitModule,
         LearningReportModule,
